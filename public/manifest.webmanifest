@@ -1,0 +1,11 @@
+{
+  "name": "Engineering Delivery Flow",
+  "short_name": "Eng Delivery",
+  "description": "A shared OTS and MES engineering delivery workflow.",
+  "start_url": "./app.html",
+  "scope": "./",
+  "display": "standalone",
+  "background_color": "#eef4f1",
+  "theme_color": "#073b45",
+  "icons": [{"src":"./icon.svg","sizes":"any","type":"image/svg+xml","purpose":"any maskable"}]
+}
