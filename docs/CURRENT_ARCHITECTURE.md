@@ -1,5 +1,17 @@
-# API directory
+# Current V22 Prototype Architecture
 
-The current public-safe reconstruction remains browser/localStorage based to preserve the V22 prototype behavior. A real multi-user deployment should implement authenticated API endpoints here (or in the selected production backend) and move authorization/data mutations server-side.
+```text
+Browser / PWA
+   |
+   +-- UI and role-specific views
+   +-- project/task/query workflow rules
+   +-- reporting / import-export logic
+   +-- service worker / installable PWA
+   |
+   v
+Browser localStorage
+```
 
-Do not treat browser role checks as production security.
+The live V22 has no shared application database. Data entered in one browser profile is not automatically available on another user's device. The role selector is a demonstration mechanism, not secure authentication.
+
+The live Hatchable project also contains an administrator-only `/api/qa` smoke-test function. The discovered implementation references legacy populated-demo selectors/users and should be replaced with a V22 fresh-start lifecycle test before being used as release evidence.

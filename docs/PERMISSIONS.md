@@ -1,45 +1,19 @@
-# Prototype-to-Production Migration Plan
+# Permission Model
 
-## Phase 1 — Freeze and test V22 behavior
+This is the intended business model inferred from the approved V22 workflow. Production authorization must be enforced server-side.
 
-- Keep V22 as the UX/workflow reference.
-- Build a fresh-workspace automated lifecycle test.
-- Verify: add PM -> create project -> assign engineer -> create task -> submit -> review -> complete -> finish -> archive -> restore -> permanent delete.
-- Confirm final permission matrix.
+| Action | Administrator | Project Manager | Team Lead | Project Lead | Technical Manager | Engineer |
+|---|---:|---:|---:|---:|---:|---:|
+| Add/edit company people | Yes | No | No | No | No | No |
+| Create project | Yes | Yes | No | No | No | No |
+| Edit project planning | Yes | Yes | Yes | Yes | Limited/read-only unless defined | No |
+| Create/assign tasks | Yes | Yes | Yes | Yes | By policy | No |
+| Update own task | Yes | Yes | Yes | Yes | Yes | Yes |
+| Review assigned task | Yes | Yes | Yes | Yes | Yes | No unless assigned reviewer role changes |
+| Finish project | Yes | Assigned PM | No | No | No | No |
+| Archive / restore project | Yes | No | No | No | No | No |
+| Permanently delete archive | Yes | No | No | No | No | No |
 
-## Phase 2 — Central data model
+The live V22 text describes a multi-level review chain, but the discovered implementation uses one assigned reviewer per task. Sequential multi-level review should be explicitly designed before production implementation.
 
-- Define relational schema for users, projects, stages, tasks, reviews, queries and audit events.
-- Add API contracts.
-- Migrate local workflow calculations to testable service functions.
-- Remove `localStorage` as the system of record; retain it only for harmless UI preferences/offline drafts if needed.
-
-## Phase 3 — Authentication and RBAC
-
-- Add company-email login / enterprise SSO.
-- Map authenticated identities to company roles.
-- Enforce project membership and action permissions on the server.
-- Remove demo role impersonation from production builds.
-
-## Phase 4 — Integrations
-
-- SharePoint/company network-folder links.
-- Microsoft 365 integration.
-- Email notification service.
-- Optional approved company systems.
-
-## Phase 5 — PWA production hardening
-
-- Offline policy and conflict behavior.
-- Update strategy/version prompts.
-- Installability tests on iOS/Android/desktop.
-- Smart QR to canonical PWA URL.
-- Device and accessibility testing.
-
-## Phase 6 — Governance
-
-- Backup/restore strategy.
-- Data retention and deletion policies.
-- Audit retention.
-- Security review and penetration testing.
-- Monitoring, logging and incident response.
+> Superseded for V23 by `ROLE_VISIBILITY.md` (roles merged to Administrator, Project Manager, Lead, Engineer, Customer).

@@ -1,31 +1,24 @@
-# Roadmap
+# Role visibility and permissions (V24)
 
-## Required for real multi-user company use
+Typical chain: Plant Owner → Main Contractor (e.g. the automation vendor) → OTS/MES delivery firm (the app's internal team). Customers see outcomes; delivery mechanics stay internal.
 
-- Central relational database.
-- Company-email authentication / SSO.
-- Server-side RBAC.
-- API-backed project, task, review, query and audit operations.
-- Concurrency controls and conflict handling.
-- Central backups and recovery.
+| | Admin | PM | Lead | Engineer | Main Contractor | Plant Owner |
+|---|---|---|---|---|---|---|
+| Home | Portfolio + 3 RAG per project | Baseline, SPI/CPI, RAG, S-curve, milestones, quantities | Workload, reviews, blockers, punch | My tasks, my punch | Actions for you, milestones, punch, quantities | Milestones, actions for you, punch counts |
+| Add people | All roles | Engineer, MC, PO | Engineer, MC, PO | — | — | — |
+| Approve / re-baseline | Yes | Own projects | — | — | — | — |
+| Plan tasks, stages, quantities | Yes | Own | Member | — | — | — |
+| Update own task / counts | — | — | — | Yes | — | — |
+| Approve task → Completed | Assigned reviewer only | | | — | — | — |
+| Hours, budget, CPI | Yes | Yes | Yes | Own hours | No | No |
+| SPI, schedule RAG, milestones (baseline/forecast/slip) | Yes | Yes | Yes | Overall % | Yes | Yes |
+| Quantities (tags, units, scenarios, graphics) | Yes | Yes | Yes | Own | Yes | No |
+| Punch list | Full | Full | Full | Full | Full; raise and close | Counts only |
+| Data requests | All | All, create | All, create | Read | All; mark sent | Own; mark sent |
+| Queries: Internal | Yes | Yes | Yes | Yes | No | No |
+| Queries: Main contractor | Yes | Yes | Yes | Yes | Yes | No |
+| Queries: Both customers | Yes | Yes | Yes | Yes | Yes | Yes |
+| Weekly report | All 4 audiences | Write, publish | Write | Engineering view | Published MC version | Published PO version |
+| Archive / restore / delete | Yes | — | — | — | — | — |
 
-## Integrations
-
-- SharePoint and approved company network-folder workflows.
-- Microsoft 365.
-- Email notifications.
-- Other approved company systems through documented adapters.
-
-## Workflow improvements
-
-- Decide whether task review is single assigned reviewer or automatic sequential Project Lead -> Team Lead -> Project Manager -> Administrator.
-- Notification preferences and escalation rules.
-- Project templates by OTS/MES project type.
-- Capacity/load planning across multiple projects.
-- Timesheets when business requirements are finalized.
-
-## PWA
-
-- Preserve installable web app as the primary mobile strategy.
-- Smart QR to the canonical PWA URL.
-- No app-store packaging unless a later business requirement justifies it.
+Enforced in the UI today; production must enforce these rules on the server.
