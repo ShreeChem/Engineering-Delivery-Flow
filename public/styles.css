@@ -53,4 +53,4 @@
 .report h2{margin:4px 0}.report h3{margin:18px 0 6px;font-size:15px;border-top:1px solid var(--line);padding-top:12px}.r-head{margin-bottom:10px}.rlist{margin:4px 0;padding-left:18px}.rlist li{margin:3px 0}.ritem{margin:5px 0;font-size:13px}
 .sticky-actions{margin:4px 0 12px}
 @media(max-width:650px){.seg{width:100%}.seg button{flex:1}.head-tools .switch{min-width:0;width:100%}.rag-row{grid-template-columns:1fr}.kpi-row{grid-template-columns:repeat(3,1fr)}}
-@media print{.topbar,.sidebar,.phone-bottom,.actions{display:none}.layout{display:block}}
+@media print{.chips,.head-tools,.sticky-actions,.notice .btn{display:none}.panel{box-shadow:none;border:0}}
