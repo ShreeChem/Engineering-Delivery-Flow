@@ -225,6 +225,13 @@ function modal(title,sub,body,buttons=''){
   $('modal-root').innerHTML = `<div class="modal-backdrop" onclick="if(event.target===this)closeModal()"><section class="modal"><header class="modal-head"><div><h3>${title}</h3><small>${sub}</small></div><button class="close" onclick="closeModal()" aria-label="Close">×</button></header><div class="modal-body">${body}</div>${buttons?`<footer class="modal-actions">${buttons}</footer>`:''}</section></div>`;
 }
 window.closeModal = () => { $('modal-root').innerHTML = '' };
+/* In-page confirmation (browser confirm/prompt are blocked in embedded viewers) */
+function ask(title, msg, o, cb){
+  o = o||{};
+  modal(esc(title), '', `<p>${msg}</p>${o.input!=null?`<input id="askv" class="field" placeholder="${esc(o.input)}">`:''}`, `<button class="btn ghost" onclick="closeModal()">Cancel</button><button class="btn ${o.danger?'danger':'primary'}" id="askok">${esc(o.ok||'OK')}</button>`);
+  $('askok').onclick = () => { const v = $('askv') ? $('askv').value.trim() : ''; if(o.match && v!==o.match) return note('Type '+o.match+' to confirm.'); closeModal(); cb(v) };
+}
+const EMBED = !!window.EDF_ARTIFACT;
 function page(ey,title,copy,buttons=''){ return `<div class="page-head"><div><div class="eyebrow">${ey}</div><h1>${title}</h1>${copy?`<p class="subcopy">${copy}</p>`:''}</div><div class="actions">${buttons}</div></div>` }
 function greeting(){ const h = new Date().getHours(); return h<12?'Good morning':h<18?'Good afternoon':'Good evening' }
 function top(){
@@ -517,7 +524,7 @@ function demoPanel(){
 }
 function adminPage(){
   return page('Administrator','Settings','Demo data, backup, audit and app access.')+
-  `<div class="admin-layout"><div>${demoPanel()}<section class="panel"><h3>Backup</h3><p class="muted">Data lives only in this browser. Download a backup regularly.</p><div class="actions"><button class="btn soft" onclick="backup()">Download backup</button><button class="btn ghost" onclick="auditLog()">Audit log</button></div></section>
+  `<div class="admin-layout"><div>${demoPanel()}<section class="panel"><h3>Backup</h3><p class="muted">Data lives only in this browser. Download a backup regularly.</p><div class="actions">${EMBED?'':'<button class="btn soft" onclick="backup()">Download backup</button>'}<button class="btn ghost" onclick="auditLog()">Audit log</button></div></section>
   <section class="panel danger-zone"><h3>Start fresh</h3><p class="muted">Deletes all people except Administrator, and all projects, tasks, punch items, data requests and reports on this device.</p><button class="btn danger" onclick="startFresh()">Start fresh</button></section></div>
   <section class="panel"><h3>Open on a phone</h3><div class="qr-wrap"><div id="qr-admin" class="qr-box">QR</div><p class="muted">Scan to open the app, then "Add to Home Screen". No App Store needed.</p></div></section></div>`;
 }
@@ -581,7 +588,7 @@ function reportPage(){
     const aud = isMC()?'mc':'po', r = D.reports[p.id]||{}, weeks = Object.keys(r).filter(w=>r[w].frozen&&r[w].frozen[aud]).sort().reverse();
     const w = weeks.includes(U.week) ? U.week : weeks[0];
     return page(esc(p.code),'Weekly report','Published by the project team.', switcher())+
-    (w?`<div class="chips">${weeks.slice(0,8).map(x=>`<button class="chip ${x===w?'on':''}" onclick="setWeek('${x}')">${fmtS(x)}</button>`).join('')}</div><section class="panel report">${r[w].frozen[aud]}</section><div class="actions"><button class="btn ghost" onclick="window.print()">Print / PDF</button></div>`:'<section class="panel"><div class="empty">No report published yet.</div></section>');
+    (w?`<div class="chips">${weeks.slice(0,8).map(x=>`<button class="chip ${x===w?'on':''}" onclick="setWeek('${x}')">${fmtS(x)}</button>`).join('')}</div><section class="panel report">${r[w].frozen[aud]}</section>${EMBED?'':'<div class="actions"><button class="btn ghost" onclick="window.print()">Print / PDF</button></div>'}`:'<section class="panel"><div class="empty">No report published yet.</div></section>');
   }
   const aud = AUD[U.audience] ? U.audience : (role()==='Engineer'?'eng':'mgmt'), inp = inputs(p,wk), rec = (D.reports[p.id]||{})[wk];
   const pub = rec && rec.frozen;
@@ -589,7 +596,7 @@ function reportPage(){
   `<div class="head-tools">${heads()}</div>${baselineNotice(p)}
   <div class="chips">${Object.keys(AUD).map(a=>`<button class="chip ${a===aud?'on':''}" onclick="setAud('${a}')">${AUD[a]}</button>`).join('')}</div>
   <section class="panel report">${reportBody(p,aud,inp)}</section>
-  <div class="actions sticky-actions"><button class="btn ghost" onclick="copyReport('${aud}')">Copy as e-mail text</button><button class="btn ghost" onclick="window.print()">Print / PDF</button><button class="btn ghost" onclick="exportExcel()">Excel</button>${canEditProject(p)?`<button class="btn primary" onclick="publishReport()">${pub?'Re-publish':'Publish'} to customers</button>`:''}</div>
+  <div class="actions sticky-actions"><button class="btn ghost" onclick="copyReport('${aud}')">Copy as e-mail text</button>${EMBED?'':'<button class="btn ghost" onclick="window.print()">Print / PDF</button><button class="btn ghost" onclick="exportExcel()">Excel</button>'}${canEditProject(p)?`<button class="btn primary" onclick="publishReport()">${pub?'Re-publish':'Publish'} to customers</button>`:''}</div>
   ${pub?`<p class="muted small">Published to customers ${fmt(pub.at)} by ${esc(pub.by)}.</p>`:''}`;
 }
 
@@ -727,15 +734,15 @@ window.finishProject = id => {
 };
 window.archiveProject = id => {
   if(!isAdmin()) return; const p = D.projects.find(x=>x.id===id);
-  const reason = prompt('Archive reason'); if(reason===null) return;
+  ask('Archive '+p.code, 'The project moves to the archive. An Administrator can restore it.', {input:'Archive reason', ok:'Archive', danger:true}, reason => {
   p.archived = {at:new Date().toISOString(), by:me().name, reason:reason||'No reason recorded'};
-  D.archive.push(p); D.projects = D.projects.filter(x=>x.id!==id); log('Archived '+p.code); U.projectId=''; U.view='archive'; render();
+  D.archive.push(p); D.projects = D.projects.filter(x=>x.id!==id); log('Archived '+p.code); U.projectId=''; U.view='archive'; render(); });
 };
 window.restore = id => { const p = D.archive.find(x=>x.id===id); D.archive = D.archive.filter(x=>x.id!==id); delete p.archived; D.projects.push(p); log('Restored '+p.code); U.projectId=p.id; U.view='projects'; render() };
 window.deleteForever = id => {
-  const p = D.archive.find(x=>x.id===id); if(prompt('Type DELETE '+p.code+' to confirm')!=='DELETE '+p.code) return;
+  const p = D.archive.find(x=>x.id===id); ask('Delete '+p.code+' permanently', 'This cannot be undone. Type <b>DELETE '+esc(p.code)+'</b> to confirm.', {input:'DELETE '+p.code, match:'DELETE '+p.code, ok:'Delete', danger:true}, () => {
   D.archive = D.archive.filter(x=>x.id!==id); ['tasks','queries','punch','data'].forEach(k=>D[k]=D[k].filter(t=>t.p!==id)); delete D.weekly[id]; delete D.reports[id];
-  log('Permanently deleted '+p.code); render();
+  log('Permanently deleted '+p.code); render(); });
 };
 
 /* ---------- stages ---------- */
@@ -787,7 +794,7 @@ window.saveTask = id => {
   addMember(p, owner); addMember(p, reviewer);
   snap(p); log((id?'Updated ':'Created ')+t.id); closeModal(); render();
 };
-window.deleteTask = id => { if(!confirm('Delete this task?')) return; const t=D.tasks.find(x=>x.id===id), p=D.projects.find(x=>x.id===t.p); D.tasks=D.tasks.filter(x=>x.id!==id); snap(p); log('Deleted '+id); closeModal(); render() };
+window.deleteTask = id => ask('Delete task', 'Delete this task and its history?', {ok:'Delete', danger:true}, () => { const t=D.tasks.find(x=>x.id===id), p=D.projects.find(x=>x.id===t.p); D.tasks=D.tasks.filter(x=>x.id!==id); snap(p); log('Deleted '+id); render() });
 window.openTask = id => {
   const t = D.tasks.find(x=>x.id===id), p = D.projects.find(x=>x.id===t.p), s = stage(p,t.sid);
   modal(esc(t.title), esc(t.id+' · '+(s?s.name:'')), `<p>${badge(t.status,sColor(t.status))} <small class="muted">earned ${credit(t)}%</small></p><p><b>Assignee:</b> ${esc(user(t.owner).name)}<br><b>Reviewer:</b> ${esc(user(t.reviewer).name)}<br><b>Dates:</b> ${fmt(t.start)} → ${fmt(t.due)}${p.baseline&&p.baseline.tasks[t.id]&&p.baseline.tasks[t.id].due!==t.due?` <small class="muted">(baseline ${fmtS(p.baseline.tasks[t.id].due)})</small>`:''}${canSeeHours()||t.owner===me().id?`<br><b>Hours:</b> ${t.actual} / ${t.plan}`:''}${t.qty?`<br><b>${esc(t.qty.unit)}:</b> ${(t.qty.done||0).toLocaleString()} / ${t.qty.target.toLocaleString()}`:''}<br><b>Location:</b> ${t.location?esc(t.location):'—'}</p>${(t.notes||[]).length?'<h4>History</h4>'+t.notes.map(n=>`<p class="note-line"><small>${esc(n.at?fmt(n.at):'')} · ${esc(n.by||'')}</small><br>${esc(n.text||n)}</p>`).join(''):''}`,
@@ -914,7 +921,7 @@ window.saveData = id => {
   Object.assign(d, {title, owedBy:$('do').value, needed:$('dn').value, blocks:$('db').value});
   log((id?'Updated ':'Requested ')+d.id); closeModal(); render();
 };
-window.deleteData = id => { if(!confirm('Delete this request?')) return; D.data = D.data.filter(x=>x.id!==id); closeModal(); render() };
+window.deleteData = id => ask('Delete request', 'Delete this data request?', {ok:'Delete', danger:true}, () => { D.data = D.data.filter(x=>x.id!==id); render() });
 window.openData = id => {
   const d = D.data.find(x=>x.id===id), p = D.projects.find(x=>x.id===d.p), c = isCust();
   const mine = c && (isMC() || d.owedBy===role());
@@ -946,9 +953,9 @@ window.saveInputs = () => {
 window.publishReport = () => {
   const p = project(); if(!canEditProject(p)) return; const wk = weekStart(today()), inp = inputs(p,wk);
   if(!inp.custNarrative) return note('Write the customer summary first (Write this week).');
-  if(!confirm('Publish this week’s report to the Main Contractor and Plant Owner? It is frozen as it looks now.')) return;
+  ask('Publish weekly report', 'The Main Contractor and Plant Owner versions are frozen exactly as they look now.', {ok:'Publish'}, () => {
   snap(p); inp.frozen = {at:new Date().toISOString(), by:me().name, mc:reportBody(p,'mc',inp), po:reportBody(p,'po',inp)};
-  log('Published weekly report '+p.code+' '+wk); render(); note('Published to customers.');
+  log('Published weekly report '+p.code+' '+wk); render(); note('Published to customers.'); });
 };
 window.copyReport = aud => {
   const p = project(), txt = reportText(p, aud, inputs(p, weekStart(today())));
@@ -960,16 +967,16 @@ function showText(txt){ modal('Report text','Select all and copy',`<textarea cla
 /* ---------- admin tools ---------- */
 window.backup = () => { const a=document.createElement('a'); a.href=URL.createObjectURL(new Blob([JSON.stringify(D,null,2)],{type:'application/json'})); a.download='engineering-delivery-flow-backup-'+today()+'.json'; a.click(); URL.revokeObjectURL(a.href) };
 window.auditLog = () => modal('Audit log','Latest 300 actions', D.audit.map(a=>`<p class="note-line"><small>${esc(a.at.slice(0,16).replace('T',' ')+' · '+a.by)}</small><br>${esc(a.text)}</p>`).join(''), '<button class="btn ghost" onclick="closeModal()">Close</button>');
-window.startFresh = () => { if(prompt('Type RESET to delete everything on this device')!=='RESET') return; D = seed(); save(); U.projectId=''; U.view='dashboard'; render(); note('Fresh workspace ready.') };
+window.startFresh = () => ask('Start fresh', 'Deletes everything on this device except the Administrator. Type <b>RESET</b> to confirm.', {input:'RESET', match:'RESET', ok:'Start fresh', danger:true}, () => { D = seed(); save(); U.projectId=''; U.view='dashboard'; render(); note('Fresh workspace ready.') });
 window.removeDemo = () => {
-  if(!confirm('Remove all demo people and demo projects? Your own data stays.')) return;
+  ask('Remove demo data', 'Removes all demo people and demo projects. Everything you created yourself stays.', {ok:'Remove', danger:true}, () => {
   const ids = new Set(D.users.filter(u=>u.demo).map(u=>u.id)), pids = new Set([...D.projects,...D.archive].filter(p=>p.demo).map(p=>p.id));
   D.users = D.users.filter(u=>!u.demo); D.projects = D.projects.filter(p=>!p.demo); D.archive = D.archive.filter(p=>!p.demo);
   ['tasks','queries','punch','data'].forEach(k=>D[k]=D[k].filter(t=>!pids.has(t.p))); pids.forEach(id=>{ delete D.weekly[id]; delete D.reports[id] });
   D.projects.forEach(p=>{ p.members=(p.members||[]).filter(m=>!ids.has(m)); if(ids.has(p.pm)) p.pm='' });
   D.tasks.forEach(t=>{ if(ids.has(t.owner)) t.owner=''; if(ids.has(t.reviewer)) t.reviewer='' });
   if(ids.has(D.session)) D.session='admin';
-  log('Removed demo data'); U.projectId=''; render(); note('Demo data removed.');
+  log('Removed demo data'); U.projectId=''; render(); note('Demo data removed.'); });
 };
 window.loadDemo = () => {
   if(D.users.some(u=>u.demo)) return note('Demo data is already loaded.');
@@ -1048,6 +1055,8 @@ window.exportExcel = () => {
 };
 
 D.projects.forEach(snap); save();
+if(EMBED && !D.projects.length && !D.users.some(u=>u.demo)){ loadDemo(); const pm = D.users.find(u=>u.name==='Demo Project Manager'); if(pm){ D.session = pm.id; save() } U.view='dashboard' }
 render();
-if('serviceWorker' in navigator) navigator.serviceWorker.register('./sw.js').catch(()=>{});
+if(EMBED) note('Demo data loaded. Tap the round avatar (top right) to switch roles.');
+try{ if(!EMBED && 'serviceWorker' in navigator) navigator.serviceWorker.register('./sw.js').catch(()=>{}) }catch(e){}
 })();
