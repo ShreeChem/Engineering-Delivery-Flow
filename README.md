@@ -6,7 +6,11 @@ Engineering Delivery Flow is an OTS/MES engineering project workflow application
 
 ## Live demo
 
-https://otsflow-ceo-demo.hatchable.site/
+https://shreechem.github.io/Engineering-Delivery-Flow/ (GitHub Pages, deployed automatically from `main`, always the latest version)
+
+PWA entry point: https://shreechem.github.io/Engineering-Delivery-Flow/app.html
+
+Earlier host: https://otsflow-ceo-demo.hatchable.site/ (may show an older version).
 
 ## Baseline and reconstruction status
 
