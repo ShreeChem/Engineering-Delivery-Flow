@@ -1,7 +1,37 @@
-# Links
+# Data Flow
 
-- GitHub repository: https://github.com/ShreeChem/Engineering-Delivery-Flow
-- Live Hatchable demo: https://otsflow-ceo-demo.hatchable.site/
-- PWA entry point: https://otsflow-ceo-demo.hatchable.site/app.html
-- Apple App Store: **Not applicable / pending — current strategy is PWA installation.**
-- Google Play: **Not applicable / pending — current strategy is PWA installation.**
+## Current prototype
+
+```text
+People / projects / tasks / queries entered in UI
+                    |
+                    v
+           Browser workflow logic
+                    |
+                    v
+             localStorage JSON
+                    |
+        +-----------+-----------+
+        |                       |
+        v                       v
+ dashboards / stages       reports / backup
+```
+
+## Production target
+
+```text
+Authenticated user action
+        |
+        v
+API authorization + validation
+        |
+        v
+central transaction / audit event
+        |
+        +--> relational database
+        +--> notification service
+        +--> optional Microsoft 365 / SharePoint integration
+        |
+        v
+updated role-filtered UI on all devices
+```

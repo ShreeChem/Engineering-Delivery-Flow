@@ -1,65 +1,19 @@
-# Target Production Architecture
+# Permission Model
 
-```text
-Users (web / installed PWA)
-          |
-          v
-Company email authentication / SSO
-          |
-          v
-Server-side authorization (RBAC)
-          |
-          v
-Application API
-          |
-   +------+---------------------------+
-   |      |             |             |
-   v      v             v             v
-Projects Tasks      Queries       Audit / notifications
-   |      |             |             |
-   +------+-------------+-------------+
-          |
-          v
-Central relational database
-          |
-   +------+-----------------------------+
-   |              |                     |
-   v              v                     v
-SharePoint     Microsoft 365       Email / other
-links/files    integration          approved systems
-```
+This is the intended business model inferred from the approved V22 workflow. Production authorization must be enforced server-side.
 
-## Identity and authorization
+| Action | Administrator | Project Manager | Team Lead | Project Lead | Technical Manager | Engineer |
+|---|---:|---:|---:|---:|---:|---:|
+| Add/edit company people | Yes | No | No | No | No | No |
+| Create project | Yes | Yes | No | No | No | No |
+| Edit project planning | Yes | Yes | Yes | Yes | Limited/read-only unless defined | No |
+| Create/assign tasks | Yes | Yes | Yes | Yes | By policy | No |
+| Update own task | Yes | Yes | Yes | Yes | Yes | Yes |
+| Review assigned task | Yes | Yes | Yes | Yes | Yes | No unless assigned reviewer role changes |
+| Finish project | Yes | Assigned PM | No | No | No | No |
+| Archive / restore project | Yes | No | No | No | No | No |
+| Permanently delete archive | Yes | No | No | No | No | No |
 
-Production requirements:
+The live V22 text describes a multi-level review chain, but the discovered implementation uses one assigned reviewer per task. Sequential multi-level review should be explicitly designed before production implementation.
 
-- Company-email sign-in or enterprise SSO.
-- Server-enforced role membership; never trust a browser role selector.
-- Project-level membership checks.
-- Administrator-only archive/permanent-delete operations.
-- Reviewer authorization enforced by the API.
-- Audit events stored centrally and append-only where practical.
-
-## Core data entities
-
-Recommended normalized entities:
-
-- users
-- roles / user_roles
-- projects
-- project_members
-- stages
-- work_packages
-- tasks
-- task_reviews
-- date_change_requests
-- queries_issues
-- comments
-- archived_projects / project lifecycle events
-- audit_events
-- notifications
-- integration_links
-
-## File strategy
-
-The application should not become an uncontrolled document repository. Store canonical SharePoint/company-folder links and metadata; use approved Microsoft 365 APIs when direct file actions are required.
+> Superseded for V23 by `ROLE_VISIBILITY.md` (roles merged to Administrator, Project Manager, Lead, Engineer, Customer).
