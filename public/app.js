@@ -15,9 +15,17 @@
 ------------------------------------------------------------------- */
 
 const KEY = 'edf_v24', OLD_KEY = 'edf_v23';
-const OTS = ['Process Modelling','Process Integration','Startup Internal','HMI Development','MAT','DCS Workflow','DCS/ESD Integration','Internal preFAT Startup','FAT','SAT'];
+const OTS = ['Design & Review','Process Modelling','Process Integration','Startup Internal','HMI Development','MAT','DCS Workflow','DCS/ESD Integration','Internal preFAT Startup','FAT','SAT'];
 const MES = ['Requirements','Functional Design','Configuration','Integration','Testing','Deployment','Go-Live','Hypercare / Support'];
-const MILESTONES = {OTS:['MAT','FAT','SAT'], MES:['Testing','Go-Live']};
+const MILESTONES = {OTS:['Design & Review','MAT','FAT','SAT'], MES:['Testing','Go-Live']};
+/* Design & Review checklist: created as tasks in the first OTS stage. The stage is a customer gate (FDS approved). */
+const OTS_DESIGN = [
+  'Kickoff and OTS scope agreed (units, consoles, hardware, DCS approach)',
+  'Design data received (P&IDs, H&MB, DCS database, datasheets)',
+  'P&ID scope markup: modelled, simplified, out of scope',
+  'FDS prepared',
+  'FDS review with customer: comments and holds closed',
+  'FDS approved by customer'];
 const UNITS = {OTS:['Units modelled','I/O tags emulated','Scenarios built','HMI graphics'], MES:['Requirements','Test cases','Interfaces']};
 const ROLES = ['Administrator','Project Manager','Lead','Engineer','Main Contractor','Plant Owner'];
 const CUST = ['Main Contractor','Plant Owner'];
@@ -688,9 +696,15 @@ window.projectForm = id => {
   <div class="form-group"><label>End</label><input id="pend" type="date" class="field" value="${old?.end||addDays(t0,180)}"></div>
   <div class="form-group"><label>Budget hours</label><input id="pbud" type="number" min="0" class="field" value="${old?.budget||0}"></div>
   <div class="form-group"><label>Project Manager</label><select id="ppm" class="field" ${role()==='Project Manager'&&!isAdmin()?'disabled':''}>${pms.map(u=>`<option value="${u.id}" ${u.id===pmSel?'selected':''}>${esc(u.name)}</option>`).join('')}</select></div>
-  <div class="form-group"><label>Lead</label><select id="plead" class="field"><option value="">— later —</option>${leads.map(u=>`<option value="${u.id}" ${(old?.members||[]).includes(u.id)?'selected':''}>${esc(u.name)}</option>`).join('')}</select></div></div>`,
+  <div class="form-group"><label>Lead</label><select id="plead" class="field"><option value="">— later —</option>${leads.map(u=>`<option value="${u.id}" ${(old?.members||[]).includes(u.id)?'selected':''}>${esc(u.name)}</option>`).join('')}</select></div>${old?'':`<div class="form-group full"><label><input type="checkbox" id="pdesign" checked> OTS: add the Design &amp; Review tasks (${OTS_DESIGN.length}, editable)</label></div>`}</div>`,
   `<button class="btn ghost" onclick="closeModal()">Cancel</button><button class="btn primary" onclick="saveProject('${old?.id||''}')">Save</button>`);
 };
+function addDesignChecklist(p){
+  const s = p.stages.find(x=>x.name==='Design & Review'); if(!s) return 0;
+  const lead = (p.members||[]).find(m=>user(m).role==='Lead'), owner = lead || p.pm, reviewer = lead ? p.pm : 'admin';
+  OTS_DESIGN.forEach(title=>D.tasks.push({id:sid('T-'), p:p.id, sid:s.id, title, owner, reviewer, start:s.start, due:s.end, plan:0, actual:0, status:'Not Started', location:'', notes:[], qty:null}));
+  return OTS_DESIGN.length;
+}
 window.saveProject = id => {
   const name = $('pname').value.trim(), start = $('pstart').value, end = $('pend').value;
   if(!name) return note('Enter a project name.');
@@ -705,6 +719,7 @@ window.saveProject = id => {
   } else if($('pcode').value.trim()) p.code = $('pcode').value.trim();
   Object.assign(p, {name, customer:$('pcust').value.trim()||'TBD', location:$('ploc').value.trim()||'TBD', start, end, budget:Number($('pbud').value)||0, pm});
   addMember(p, pm); addMember(p, $('plead').value);
+  if(!id && p.type==='OTS' && $('pdesign') && $('pdesign').checked) addDesignChecklist(p);
   snap(p); log((id?'Updated ':'Created ')+p.code); U.projectId = p.id; U.type = p.type; closeModal(); U.view='dashboard'; render();
 };
 function takeBaseline(p, by, reason){
@@ -989,11 +1004,12 @@ window.loadDemo = () => {
   const task = (p,si,title,o,st,plan,act,qty) => { const s = p.stages[si], t = {id:sid('T-'), p:p.id, sid:s.id, title, owner:o.id, reviewer:(o.id===ld.id?pm.id:ld.id), start:s.start, due:s.end, plan, actual:act, status:st, location:'', notes:[], qty:qty?{unit:qty[0],target:qty[1],done:qty[2]}:null}; D.tasks.push(t); return t };
 
   /* OTS project */
-  const p1 = proj('OTS','OTS-DEMO-01','Crude Unit OTS (Demo)','Demo Refinery Co.',-120,120,1600,[pm.id,ld.id,e1.id,e2.id,mc.id,po1.id]);
-  const T = [[0,'Crude & preheat train model',e1,'Completed',160,170,['Units modelled',10,10]],[0,'Fractionator & side strippers model',e2,'Completed',140,152,['Units modelled',6,6]],[1,'Model integration & tuning',e1,'Completed',120,131],[2,'Cold start-up runs',e2,'Completed',80,86],[2,'Trip & malfunction scenarios',e1,'Ready for Review',60,58,['Scenarios built',40,40]],[3,'Overview & unit graphics',e2,'In Progress',120,96,['HMI graphics',60,26]],[3,'Faceplates',e1,'Completed',60,60],[4,'MAT procedure & execution',ld,'In Progress',120,30],[5,'DCS database import',e2,'Blocked',100,30,['I/O tags emulated',5200,1300]],[6,'ESD logic emulation',e1,'Rework',120,62],[7,'Internal preFAT run',e2,'Not Started',80,0],[8,'FAT with customer',ld,'Not Started',100,0],[9,'SAT & handover',ld,'Not Started',60,0]].map(a=>task(p1,...a));
+  const p1 = proj('OTS','OTS-DEMO-01','Crude Unit OTS (Demo)','Demo Refinery Co.',-120,120,1700,[pm.id,ld.id,e1.id,e2.id,mc.id,po1.id]);
+  const T = [[1,'Crude & preheat train model',e1,'Completed',160,170,['Units modelled',10,10]],[1,'Fractionator & side strippers model',e2,'Completed',140,152,['Units modelled',6,6]],[2,'Model integration & tuning',e1,'Completed',120,131],[3,'Cold start-up runs',e2,'Completed',80,86],[3,'Trip & malfunction scenarios',e1,'Ready for Review',60,58,['Scenarios built',40,40]],[4,'Overview & unit graphics',e2,'In Progress',120,96,['HMI graphics',60,26]],[4,'Faceplates',e1,'Completed',60,60],[5,'MAT procedure & execution',ld,'In Progress',120,30],[6,'DCS database import',e2,'Blocked',100,30,['I/O tags emulated',5200,1300]],[7,'ESD logic emulation',e1,'Rework',120,62],[8,'Internal preFAT run',e2,'Not Started',80,0],[9,'FAT with customer',ld,'Not Started',100,0],[10,'SAT & handover',ld,'Not Started',60,0]].map(a=>task(p1,...a));
+  OTS_DESIGN.forEach(title=>task(p1,0,title,ld,'Completed',16,18));
   takeBaseline(p1, pm.name, ''); p1.baseline.at = new Date(Date.now()-110*864e5).toISOString();
   T[5].plan = 140; T[5].due = addDays(T[5].due,14); T[8].due = addDays(T[8].due,21);
-  p1.stages.forEach((s,i)=>{ if(i>=3){ s.end = addDays(s.end, i>=8?10:7) } });
+  p1.stages.forEach((s,i)=>{ if(i>=4){ s.end = addDays(s.end, i>=9?10:7) } });
 
   /* MES project */
   const p2 = proj('MES','MES-DEMO-01','Batch MES Rollout (Demo)','Demo Chemicals Co.',-60,150,900,[pm.id,ld.id,e1.id,e2.id,po2.id]);
@@ -1017,8 +1033,8 @@ window.loadDemo = () => {
   const dr = (p,title,owedBy,needed,status,blocks) => D.data.push({id:sid('D-'), p:p.id, title, owedBy, needed:addDays(t0,needed), status, blocks:blocks||'', at:isoN(-30), notes:[], receivedAt:status==='Received'?isoN(needed):undefined});
   dr(p1,'P&IDs, revision C','Main Contractor',-90,'Received');
   dr(p1,'Heat & material balance','Plant Owner',-95,'Received');
-  dr(p1,'DCS database export, revision D','Main Contractor',-5,'Requested',p1.stages[5].id);
-  dr(p1,'Graphics style guide','Plant Owner',7,'Requested',p1.stages[3].id);
+  dr(p1,'DCS database export, revision D','Main Contractor',-5,'Requested',p1.stages[6].id);
+  dr(p1,'Graphics style guide','Plant Owner',7,'Requested',p1.stages[4].id);
   dr(p2,'SAP material master extract','Plant Owner',10,'Requested',p2.stages[3].id);
 
   /* weekly history since start */
