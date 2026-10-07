@@ -38,6 +38,15 @@ A new OTS project can include six ready-made Design & Review tasks (editable): k
 
 The application also includes a configurable MES stage template.
 
+## Planning features (V24.2)
+
+- **Timeline** (PM, Lead, Administrator): Gantt-style view with baseline vs forecast bars, gates, today line and a late-tasks table.
+- **Starts after**: link a task to the task it waits for, with optional wait days. Slips push linked tasks later; starting early needs a remark.
+- **Workload check**: a person above 40 h/week across all projects needs a remark to be assigned; unagreed overloads alert the PM and Lead.
+- Forms close only with Cancel, × or Esc (a mouse drag ending outside a form no longer closes it).
+
+See `docs/PROGRESS_RULES.md` for the exact rules.
+
 ## Roles (V24)
 
 | Role | Added by | Sees |

@@ -29,3 +29,17 @@ A blocks the gate, B blocks start-up, C can close after start-up. A project cann
 One snapshot per week (latest values that week) feeds the S-curve and weekly bars. The weekly report has four audiences: Management, Engineering leads, Main contractor, Plant owner. Publishing freezes the customer versions.
 
 Sources for method: earned-value progress techniques (Deltek Cobra), SPI/CPI definitions (SAS EVM), RAG criteria (Deltek), status-report structure (Project Management Compass), milestone slip (Mastt), punch categories (Project Materials).
+
+## Task links ("Starts after")
+- A task can wait for one other task in the same project (finish-to-start), plus optional wait days (calendar days).
+- When the earlier task finishes later, a linked task that has not started moves later by the same amount. Tasks are never pulled earlier automatically. The baseline does not move, so the push shows as slip.
+- Starting a task before the task it waits for is complete is allowed only with a remark (planner) or a note (engineer).
+- Links cannot form a loop: a task never lists its own followers as "Starts after".
+
+## Workload check
+- Remaining hours (planned − actual) of each open task are spread evenly over its remaining working days (Mon–Fri), across all projects in the workspace.
+- Above 40 h in any week, saving the task needs a remark. A week with a remark counts as agreed and shows "parallel agreed ✓".
+- Weeks above 40 h without a remark raise an alert for the PM and Lead and show as a red "peak h/wk" in the Lead's team view.
+
+## Timeline
+PM, Lead and Administrator have a Timeline view: stages with their tasks, grey baseline bars, coloured forecast bars (done, running, not started, late or blocked), gates as diamonds, a today line, and a late-tasks table.

@@ -42,7 +42,7 @@ const NAV = {
   'Main Contractor': ['dashboard','report','punch','data','queries'],
   'Plant Owner':     ['dashboard','report','queries']
 };
-const INTERNAL_VIEWS = ['dashboard','projects','tasks','stages','reviews','punch','data','queries','report','team','people','alerts','more'];
+const INTERNAL_VIEWS = ['dashboard','projects','tasks','timeline','stages','reviews','punch','data','queries','report','team','people','alerts','more'];
 const ALLOWED = {
   'Administrator':   [...INTERNAL_VIEWS,'archive','admin'],
   'Project Manager': INTERNAL_VIEWS,
@@ -51,7 +51,7 @@ const ALLOWED = {
   'Main Contractor': ['dashboard','stages','report','punch','data','queries'],
   'Plant Owner':     ['dashboard','stages','report','queries']
 };
-const ICON = {dashboard:'⌂',projects:'▦',tasks:'◫',stages:'◇',reviews:'✓',queries:'?',team:'♙',report:'▤',people:'☺',archive:'▧',alerts:'!',admin:'⚙',more:'≡',punch:'⚑',data:'⇅'};
+const ICON = {dashboard:'⌂',projects:'▦',tasks:'◫',stages:'◇',reviews:'✓',queries:'?',team:'♙',report:'▤',people:'☺',archive:'▧',alerts:'!',admin:'⚙',more:'≡',punch:'⚑',data:'⇅',timeline:'▬'};
 
 /* ---------- storage & migration ---------- */
 const seed = () => ({
@@ -118,7 +118,7 @@ function allowed(v){ return (ALLOWED[role()]||['dashboard']).includes(v) }
 function label(v){
   if(v==='tasks' && role()==='Engineer') return 'My work';
   if(v==='stages' && isCust()) return 'Progress';
-  return {dashboard:'Home',projects:'Projects',tasks:'Tasks',stages:'Stages',reviews:'Reviews',queries:'Queries',team:'Team',report:'Report',people:'People',archive:'Archive',alerts:'Alerts',admin:'Settings',more:'More',punch:'Punch list',data:'Data requests'}[v];
+  return {dashboard:'Home',projects:'Projects',tasks:'Tasks',stages:'Stages',reviews:'Reviews',queries:'Queries',team:'Team',report:'Report',people:'People',archive:'Archive',alerts:'Alerts',admin:'Settings',more:'More',punch:'Punch list',data:'Data requests',timeline:'Timeline'}[v];
 }
 function visible(){ if(isAdmin()) return D.projects; return D.projects.filter(p => p.pm===me().id || (p.members||[]).includes(me().id)) }
 function types(){ return [...new Set(visible().map(p=>p.type))].sort().reverse() }
@@ -191,8 +191,28 @@ function ragRow(p, only){
 }
 
 /* ---------- weekly snapshots ---------- */
+/* ---------- task links: "starts after" (finish-to-start + wait days) ----------
+   A task that has not started is pushed later when the task it waits for ends later.
+   Tasks are never pulled earlier automatically; the baseline stays, so pushes show as slip. */
+function preds(t){ return (t.after||[]).map(id=>D.tasks.find(x=>x.id===id)).filter(Boolean) }
+function predsOpen(t){ return preds(t).filter(x=>x.status!=='Completed') }
+function earliestStart(t){ const ps = preds(t).filter(x=>x.due); if(!ps.length) return ''; const last = ps.map(x=>x.due).sort().pop(); return addDays(last, 1+(Number(t.lag)||0)) }
+function descendants(id){ const out = new Set(), walk = x => D.tasks.filter(t=>(t.after||[]).includes(x)).forEach(t=>{ if(!out.has(t.id)){ out.add(t.id); walk(t.id) } }); walk(id); return out }
+function schedule(p){
+  const list = tasks(p).filter(t=>(t.after||[]).length); let moved = 0;
+  for(let pass=0; pass<60; pass++){
+    let changed = false;
+    list.forEach(t=>{
+      if(t.status!=='Not Started' || !t.start || !t.due) return;
+      const es = earliestStart(t); if(es && t.start < es){ const d = days(t.start, es); t.start = es; t.due = addDays(t.due, d); changed = true; moved++ }
+    });
+    if(!changed) break;
+  }
+  return moved;
+}
 function snap(p){
   if(!p) return;
+  schedule(p);
   p.stages.forEach(s=>{ const pct = stagePct(p,s); if(pct===100 && !s.doneAt) s.doneAt = today(); if(pct<100) delete s.doneAt });
   const k = kpis(p), wk = weekStart(today()), arr = D.weekly[p.id] = D.weekly[p.id] || [];
   const e = {wk, d:today(), ev:Math.round(k.ev), pv:Math.round(k.pv), ac:k.ac, bac:Math.round(k.bac), pct:k.pct, ppct:k.ppct};
@@ -230,9 +250,10 @@ function weekBars(p,n=8){
 
 /* ---------- layout ---------- */
 function modal(title,sub,body,buttons=''){
-  $('modal-root').innerHTML = `<div class="modal-backdrop" onclick="if(event.target===this)closeModal()"><section class="modal"><header class="modal-head"><div><h3>${title}</h3><small>${sub}</small></div><button class="close" onclick="closeModal()" aria-label="Close">×</button></header><div class="modal-body">${body}</div>${buttons?`<footer class="modal-actions">${buttons}</footer>`:''}</section></div>`;
+  $('modal-root').innerHTML = `<div class="modal-backdrop"><section class="modal"><header class="modal-head"><div><h3>${title}</h3><small>${sub}</small></div><button class="close" onclick="closeModal()" aria-label="Close">×</button></header><div class="modal-body">${body}</div>${buttons?`<footer class="modal-actions">${buttons}</footer>`:''}</section></div>`;
 }
 window.closeModal = () => { $('modal-root').innerHTML = '' };
+document.addEventListener('keydown', e => { if(e.key==='Escape' && $('modal-root').innerHTML) closeModal() });
 /* In-page confirmation (browser confirm/prompt are blocked in embedded viewers) */
 function ask(title, msg, o, cb){
   o = o||{};
@@ -318,11 +339,47 @@ function taskButtons(t){
 }
 function qtyText(t){ return t.qty&&t.qty.target ? ` · ${(t.qty.done||0).toLocaleString()}/${t.qty.target.toLocaleString()} ${esc(t.qty.unit.split(' ')[0].toLowerCase())}` : '' }
 function taskCards(list){
-  return list.map(t=>{const p=D.projects.find(x=>x.id===t.p), s=p&&stage(p,t.sid);return `<article class="task-card"><div class="row"><div><b>${esc(t.title)}</b><div class="meta">${esc(s?s.name:'—')} · ${esc(user(t.owner).name)} · due ${fmtS(t.due)}${canSeeHours()||t.owner===me().id?` · ${t.actual}/${t.plan} h`:''}${qtyText(t)}${overdue(t)?' · <span class="late">overdue</span>':''}</div></div>${badge(t.status,sColor(t.status))}</div><div class="actions">${taskButtons(t)}</div></article>`}).join('') || '<div class="empty">No tasks here.</div>';
+  return list.map(t=>{const p=D.projects.find(x=>x.id===t.p), s=p&&stage(p,t.sid);return `<article class="task-card"><div class="row"><div><b>${esc(t.title)}</b><div class="meta">${esc(s?s.name:'—')} · ${esc(user(t.owner).name)} · due ${fmtS(t.due)}${canSeeHours()||t.owner===me().id?` · ${t.actual}/${t.plan} h`:''}${qtyText(t)}${overdue(t)?' · <span class="late">overdue</span>':''}${loadFlag(t)}</div></div>${badge(t.status,sColor(t.status))}</div><div class="actions">${taskButtons(t)}</div></article>`}).join('') || '<div class="empty">No tasks here.</div>';
 }
 function taskTable(list){
-  return `<div class="table-wrap"><table class="data-table"><thead><tr><th>Task</th><th>Stage</th><th>Assignee</th><th>Reviewer</th><th>Dates</th>${canSeeHours()?'<th>Hours</th>':''}<th>Qty</th><th>Status</th><th></th></tr></thead><tbody>${list.map(t=>{const p=D.projects.find(x=>x.id===t.p),s=p&&stage(p,t.sid);return `<tr><td><b>${esc(t.title)}</b><br><small>${esc(t.id)}</small></td><td>${esc(s?s.name:'—')}</td><td>${esc(user(t.owner).name)}</td><td>${esc(user(t.reviewer).name)}</td><td>${fmt(t.start)} → ${fmt(t.due)}${overdue(t)?'<br><span class="late">overdue</span>':''}</td>${canSeeHours()?`<td>${t.actual}/${t.plan} h</td>`:''}<td>${t.qty&&t.qty.target?`${(t.qty.done||0).toLocaleString()}/${t.qty.target.toLocaleString()}<br><small>${esc(t.qty.unit)}</small>`:'—'}</td><td>${badge(t.status,sColor(t.status))}</td><td><div class="actions">${taskButtons(t)}</div></td></tr>`}).join('')||'<tr><td colspan="9">No tasks</td></tr>'}</tbody></table></div><div class="mobile-cards">${taskCards(list)}</div>`;
+  return `<div class="table-wrap"><table class="data-table"><thead><tr><th>Task</th><th>Stage</th><th>Assignee</th><th>Reviewer</th><th>Dates</th>${canSeeHours()?'<th>Hours</th>':''}<th>Qty</th><th>Status</th><th></th></tr></thead><tbody>${list.map(t=>{const p=D.projects.find(x=>x.id===t.p),s=p&&stage(p,t.sid);return `<tr><td><b>${esc(t.title)}</b><br><small>${esc(t.id)}</small></td><td>${esc(s?s.name:'—')}</td><td>${esc(user(t.owner).name)}${loadFlag(t).replace(' · ','<br>')}</td><td>${esc(user(t.reviewer).name)}</td><td>${fmt(t.start)} → ${fmt(t.due)}${overdue(t)?'<br><span class="late">overdue</span>':''}</td>${canSeeHours()?`<td>${t.actual}/${t.plan} h</td>`:''}<td>${t.qty&&t.qty.target?`${(t.qty.done||0).toLocaleString()}/${t.qty.target.toLocaleString()}<br><small>${esc(t.qty.unit)}</small>`:'—'}</td><td>${badge(t.status,sColor(t.status))}</td><td><div class="actions">${taskButtons(t)}</div></td></tr>`}).join('')||'<tr><td colspan="9">No tasks</td></tr>'}</tbody></table></div><div class="mobile-cards">${taskCards(list)}</div>`;
 }
+
+/* ---------- workload across all projects ----------
+   Remaining hours (planned − actual) of each open task are spread evenly over its
+   remaining working days (Mon–Fri). A person is overloaded in a week above CAPACITY. */
+const CAPACITY = 40;
+const PCAT = {A:'Cat A · blocks the gate', B:'Cat B · fix before start-up', C:'Cat C · minor, can close later'};
+let LOADCACHE = {};
+function workdays(a,b){ const out=[]; for(let d=dt(a); d<=dt(b); d.setDate(d.getDate()+1)){ const w=d.getDay(); if(w>0&&w<6) out.push(iso(d)) } return out }
+function weekLoad(uid, extra, skipId){
+  const t0 = today(), active = new Set(D.projects.map(p=>p.id)), weeks = {};
+  const list = D.tasks.filter(t=>t.owner===uid && t.id!==skipId && t.status!=='Completed' && active.has(t.p));
+  if(extra) list.push(extra);
+  list.forEach(t=>{
+    const rem = Math.max((t.plan||0)-(t.actual||0),0); if(!rem || !t.due || t.due<t0) return;
+    const from = t.start && t.start>t0 ? t.start : t0, days = workdays(from, t.due); if(!days.length) return;
+    days.forEach(d=>{ const wk=weekStart(d), w=weeks[wk]=weeks[wk]||{h:0,tasks:new Set()}; w.h+=rem/days.length; w.tasks.add(t) });
+  });
+  return weeks;
+}
+function overload(uid, extra, skipId){
+  const key = uid+'|'+(extra?JSON.stringify([extra.start,extra.due,extra.plan,extra.actual,extra.p]):'')+'|'+(skipId||'');
+  if(LOADCACHE[key]) return LOADCACHE[key];
+  const weeks = weekLoad(uid, extra, skipId), over = Object.keys(weeks).filter(w=>weeks[w].h>CAPACITY+0.5).sort();
+  let peak = {wk:'', h:0}; Object.keys(weeks).forEach(w=>{ if(weeks[w].h>peak.h) peak={wk:w, h:weeks[w].h} });
+  const tasksOver = new Set(); over.forEach(w=>weeks[w].tasks.forEach(t=>tasksOver.add(t)));
+  const wk = over.map(w=>({wk:w, h:Math.round(weeks[w].h), tasks:[...weeks[w].tasks], remark:([...weeks[w].tasks].find(t=>t.loadRemark)||{}).loadRemark||''}));
+  const open = wk.filter(w=>!w.remark), worst = (open.length?open:wk).reduce((a,b)=>b.h>a.h?b:a, {h:0,wk:''});
+  return LOADCACHE[key] = {over, weeks:wk, open, worst, peak:{wk:peak.wk, h:Math.round(peak.h)}, tasks:[...tasksOver]};
+}
+function loadFlag(t){
+  if(t.status==='Completed' || !t.owner) return '';
+  const mine = overload(t.owner).weeks.filter(w=>w.tasks.some(x=>x.id===t.id)); if(!mine.length) return '';
+  const open = mine.find(w=>!w.remark);
+  return open ? ` · <span class="late">over ${CAPACITY} h/week</span>` : ` · <span class="ok-par" title="${esc(mine[0].remark)}">parallel agreed ✓</span>`;
+}
+function projName(pid){ const p = D.projects.find(x=>x.id===pid); return p ? p.code : '' }
 
 /* ---------- alerts per role ---------- */
 function alerts(){
@@ -345,6 +402,10 @@ function alerts(){
       openPunch(p).filter(x=>x.cat==='A').forEach(x=>a.push({h:'Open Cat A punch', x:p.code+' · '+x.title, c:'warn'}));
       D.queries.filter(q=>q.p===p.id&&q.status==='Awaiting team'&&(q.owner===id||r==='Project Manager')).forEach(q=>a.push({h:'Query waiting for team', x:p.code+' · '+q.title}));
     });
+    [...new Set(projs.flatMap(p=>p.members||[]))].map(user).filter(u=>['Engineer','Lead'].includes(u.role)).forEach(u=>{
+      const o = overload(u.id); if(!o.open.length) return;
+      a.push({h:u.name+' overloaded: '+o.worst.h+' h in week of '+fmtS(o.worst.wk), x:'Limit '+CAPACITY+' h · '+[...new Set(o.worst.tasks.map(t=>projName(t.p)))].join(', ')+' · change dates, reassign, or add a remark in the task', c:'warn'});
+    });
   }
   if(r==='Engineer'){
     projs.forEach(p=>{
@@ -353,6 +414,7 @@ function alerts(){
       openPunch(p).filter(x=>x.owner===id&&x.status==='Open').forEach(x=>a.push({h:'Punch item '+x.cat+' assigned to you', x:x.title, c:x.cat==='A'?'warn':''}));
       D.queries.filter(q=>q.p===p.id&&q.owner===id&&q.status!=='Closed').forEach(q=>a.push({h:q.kind+' assigned to you', x:q.title}));
     });
+    const o = overload(id); if(o.over.length) a.push({h:'You have '+o.worst.h+' h planned in week of '+fmtS(o.worst.wk), x:'Across '+[...new Set(o.worst.tasks.map(t=>projName(t.p)))].join(', ')+(o.open.length?' · talk to your Lead':' · agreed: '+o.worst.remark), c:o.open.length?'warn':''});
   }
   if(isCust()){
     projs.forEach(p=>{
@@ -410,7 +472,7 @@ function leadDash(p){
   return page('Lead', greeting()+', '+esc(me().name.split(' ')[0])+'.','Team workload, reviews, blockers and punch items.', canPlan(p)?'<button class="btn primary" onclick="taskForm()">＋ Task</button>':'')+
   `<div class="head-tools">${heads()}</div>`+heroInternal(p)+ragRow(p)+
   `<div class="metric-grid">${metric('Reviews for you',t.filter(x=>x.status==='Ready for Review'&&x.reviewer===id).length,'Approve or return')}${metric('Blocked',t.filter(x=>x.status==='Blocked').length,'Need help')}${metric('Overdue',t.filter(overdue).length,'Past due date')}${metric('Open punch',openPunch(p).length,openPunch(p).filter(x=>x.cat==='A').length+' Cat A')}</div>
-  <div class="content-grid"><section class="panel"><div class="panel-head"><h3>Team workload</h3><button class="btn tiny soft" onclick="go('team')">Team</button></div>${team.map(u=>{const a=t.filter(x=>x.owner===u.id),open=a.filter(x=>x.status!=='Completed');return `<div class="load-row"><div><b>${esc(u.name)}</b><small>${esc(u.role)} · ${open.length} open · ${a.filter(overdue).length} overdue · ${openPunch(p).filter(x=>x.owner===u.id).length} punch</small></div><span>${sum(a,x=>x.actual)}/${sum(a,x=>x.plan)} h</span></div>`}).join('')||'<div class="empty">No engineers yet.</div>'}</section><section class="panel"><div class="panel-head"><h3>Action center</h3></div>${alertList()}</section></div>
+  <div class="content-grid"><section class="panel"><div class="panel-head"><h3>Team workload</h3><button class="btn tiny soft" onclick="go('team')">Team</button></div>${team.map(u=>{const a=t.filter(x=>x.owner===u.id),open=a.filter(x=>x.status!=='Completed');return `<div class="load-row"><div><b>${esc(u.name)}</b><small>${esc(u.role)} · ${open.length} open · ${a.filter(overdue).length} overdue · ${openPunch(p).filter(x=>x.owner===u.id).length} punch</small></div><span>${(o=>o.peak.h?`<b class="${o.over.length?'late':''}">peak ${o.peak.h} h/wk</b><br>`:'')(overload(u.id))}${sum(a,x=>x.actual)}/${sum(a,x=>x.plan)} h</span></div>`}).join('')||'<div class="empty">No engineers yet.</div>'}</section><section class="panel"><div class="panel-head"><h3>Action center</h3></div>${alertList()}</section></div>
   <div class="content-grid"><section class="panel"><h3>${p.type==='OTS'?'OTS quantities':'Quantities'}</h3>${countsPanel(p)}</section><section class="panel"><div class="panel-head"><h3>Punch list</h3><button class="btn tiny soft" onclick="go('punch')">Open</button></div>${punchSummary(p)}</section></div>`;
 }
 function engineerDash(p){
@@ -489,7 +551,7 @@ function queriesPage(){
 }
 function punchCard(x){
   const p = D.projects.find(q=>q.id===x.p), g = p && stage(p,x.gate);
-  return `<article class="query-card" onclick="openPunch('${x.id}')"><div class="row"><div><div class="eyebrow">${esc(x.id)} · ${esc(g?g.name:'—')} · Category ${x.cat}</div><b>${esc(x.title)}</b><div class="meta">${isCust()?'':'Owner '+esc(user(x.owner).name)+' · '}Raised ${fmtS(x.at)} by ${esc(user(x.raisedBy).role===role()||!isCust()?user(x.raisedBy).name:'Project team')}</div></div>${badge(x.status,x.status==='Closed'?'green':x.status==='Fixed'?'gold':x.cat==='A'?'red':'blue')}</div></article>`;
+  return `<article class="query-card" onclick="openPunch('${x.id}')"><div class="row"><div><div class="eyebrow">${esc(x.id)} · ${esc(g?g.name:'—')} · ${PCAT[x.cat]}</div><b>${esc(x.title)}</b><div class="meta">${isCust()?'':'Owner '+esc(user(x.owner).name)+' · '}Raised ${fmtS(x.at)} by ${esc(user(x.raisedBy).role===role()||!isCust()?user(x.raisedBy).name:'Project team')}</div></div>${badge(x.status,x.status==='Closed'?'green':x.status==='Fixed'?'gold':x.cat==='A'?'red':'blue')}</div></article>`;
 }
 function punchPage(){
   const p = project(); if(!p) return emptyWorkspace();
@@ -536,6 +598,39 @@ function adminPage(){
   <section class="panel danger-zone"><h3>Start fresh</h3><p class="muted">Deletes all people except Administrator, and all projects, tasks, punch items, data requests and reports on this device.</p><button class="btn danger" onclick="startFresh()">Start fresh</button></section></div>
   <section class="panel"><h3>Open on a phone</h3><div class="qr-wrap"><div id="qr-admin" class="qr-box">QR</div><p class="muted">Scan to open the app, then "Add to Home Screen". No App Store needed.</p></div></section></div>`;
 }
+/* ---------- timeline (Gantt) for PM, Lead, Admin ---------- */
+function timelinePage(){
+  const p = project(); if(!p) return emptyWorkspace();
+  const T = tasks(p).filter(t=>t.start&&t.due), bl = p.baseline;
+  const dates = [p.start, p.end, ...T.map(t=>t.start), ...T.map(t=>t.due), ...p.stages.map(s=>s.end).filter(Boolean), ...(bl?Object.values(bl.tasks).map(x=>x.due):[])].filter(Boolean).sort();
+  const min = dates[0], max = dates[dates.length-1], span = Math.max(1, days(min,max)+1);
+  const X = d => clamp(days(min,d)/span*100, 0, 100), W = (a,b) => Math.max(0.6, (days(a,b)+1)/span*100);
+  const t0 = today(), tx = t0>=min && t0<=max ? X(t0) : -1;
+  const months = []; for(let d=dt(min.slice(0,8)+'01'); d<=dt(max); d.setMonth(d.getMonth()+1)){ const k=iso(d); if(k>=min) months.push(k) }
+  const today_ = tx>=0 ? `<i class="tl-today" style="left:${tx}%"></i>` : '';
+  const late = T.filter(overdue);
+  const cls = t => t.status==='Completed'?'done':overdue(t)?'late':t.status==='Blocked'?'late':t.status==='Not Started'?'todo':'run';
+  const rows = p.stages.filter(s=>!s.na).map(s=>{
+    const st = T.filter(t=>t.sid===s.id), a = st.length ? st.map(t=>t.start).sort()[0] : s.start, b = st.length ? st.map(t=>t.due).sort().pop() : s.end;
+    const z = stageState(p,s), open = !(U.tlClosed||{})[s.id], bs = bl && bl.stages[s.id];
+    const head = `<div class="tl-row tl-stage" onclick="tlToggle('${s.id}')"><div class="tl-name"><span class="tl-car">${open?'▾':'▸'}</span><b>${esc(s.name)}</b><small>${z.pct}%</small></div><div class="tl-track">${today_}${bs&&bs.start&&bs.end?`<i class="tl-bl" style="left:${X(bs.start)}%;width:${W(bs.start,bs.end)}%"></i>`:''}${a&&b?`<i class="tl-sum" style="left:${X(a)}%;width:${W(a,b)}%"></i>`:''}${s.milestone&&s.end?`<i class="tl-ms" style="left:${X(s.end)}%" title="${esc(s.name)} ${fmt(s.end)}"></i>`:''}</div></div>`;
+    if(!open) return head;
+    return head + st.sort((x,y)=>x.start<y.start?-1:1).map(t=>{
+      const b0 = bl && bl.tasks[t.id], pr = preds(t)[0], sl = b0 && b0.due ? days(b0.due, t.due) : 0;
+      return `<div class="tl-row"><div class="tl-name" onclick="openTask('${t.id}')"><span>${esc(t.title)}</span><small>${esc(user(t.owner).name)}${pr?' · after '+esc(pr.title):''}${sl>0?' · <b class="late">+'+sl+' d</b>':''}</small></div><div class="tl-track">${today_}${b0&&b0.start&&b0.due?`<i class="tl-bl" style="left:${X(b0.start)}%;width:${W(b0.start,b0.due)}%"></i>`:''}<i class="tl-bar ${cls(t)}" style="left:${X(t.start)}%;width:${W(t.start,t.due)}%" title="${esc(t.title)}: ${fmt(t.start)} – ${fmt(t.due)} · ${esc(t.status)}"><span style="width:${credit(t)}%"></span></i></div></div>`;
+    }).join('');
+  }).join('');
+  const next = gates(p).find(s=>stagePct(p,s)<100);
+  return page(esc(p.code),'Timeline','Stages and tasks on a calendar. Grey = baseline, coloured = forecast. A task linked with "Starts after" moves when the task before it slips.', canPlan(p)?'<button class="btn primary" onclick="taskForm()">＋ Task</button>':'')+
+  `<div class="head-tools">${heads()}</div>
+  <div class="metric-grid">${metric('Earned',projectPct(p)+'%','Planned '+kpis(p).ppct+'%')}${metric('Next milestone',next?esc(next.name):'—',next?fmt(next.end)+(slip(p,next)>0?' · +'+slip(p,next)+' d':''):'All done')}${metric('Late tasks',late.length,'Past due, not complete')}${metric('Linked tasks',tasks(p).filter(t=>(t.after||[]).length).length,'With "Starts after"')}</div>
+  <section class="panel"><div class="tl-wrap"><div class="tl">
+  <div class="tl-row tl-head"><div class="tl-name"><small>Stage / task</small></div><div class="tl-track">${months.map(m=>`<span class="tl-m" style="left:${X(m)}%">${dt(m).toLocaleDateString('en-GB',{month:'short',year:'2-digit'})}</span>`).join('')}${tx>=0?`<span class="tl-tl" style="left:${tx}%">Today</span>`:''}</div></div>
+  ${rows}</div></div>
+  <div class="legend"><span><i class="box" style="background:#cfd8d4"></i>Baseline</span><span><i class="box" style="background:#2E8B57"></i>Done</span><span><i class="box" style="background:#2d73a8"></i>Running</span><span><i class="box" style="background:#9fb3c8"></i>Not started</span><span><i class="box" style="background:#c54b45"></i>Late or blocked</span><span>◆ Gate</span></div></section>
+  <section class="panel"><h3>Late tasks</h3>${late.length?`<table class="mini-table"><thead><tr><th>Task</th><th>Owner</th><th>Due</th><th>Days late</th><th>Earned</th></tr></thead><tbody>${late.map(t=>`<tr><td style="text-align:left">${esc(t.title)}</td><td>${esc(user(t.owner).name)}</td><td>${fmtS(t.due)}</td><td class="bad">${days(t.due,t0)}</td><td>${credit(t)}%</td></tr>`).join('')}</tbody></table>`:'<div class="empty">No late tasks.</div>'}</section>`;
+}
+window.tlToggle = id => { U.tlClosed = U.tlClosed||{}; U.tlClosed[id] = !U.tlClosed[id]; render() };
 function alertsPage(){ return page('Action center','Alerts','Items for your role.')+`<section class="panel">${alertList()}</section>` }
 function morePage(){
   const v = (ALLOWED[role()]||[]).filter(x=>!(NAV[role()]||[]).includes(x)&&x!=='more');
@@ -611,10 +706,10 @@ function reportPage(){
 /* ---------- render ---------- */
 function body(){
   if(!allowed(U.view)) U.view = 'dashboard';
-  const fn = {dashboard,projects:projectsPage,tasks:tasksPage,stages:stagesPage,reviews:reviewsPage,queries:queriesPage,team:teamPage,report:reportPage,people:peoplePage,archive:archivePage,admin:adminPage,alerts:alertsPage,more:morePage,punch:punchPage,data:dataPage}[U.view] || dashboard;
+  const fn = {dashboard,timeline:timelinePage,projects:projectsPage,tasks:tasksPage,stages:stagesPage,reviews:reviewsPage,queries:queriesPage,team:teamPage,report:reportPage,people:peoplePage,archive:archivePage,admin:adminPage,alerts:alertsPage,more:morePage,punch:punchPage,data:dataPage}[U.view] || dashboard;
   return `${top()}<div class="layout">${side()}<main class="workspace">${fn()}</main></div>${bottom()}`;
 }
-function render(){ $('app').innerHTML = body(); drawQR('qr-admin') }
+function render(){ LOADCACHE = {}; $('app').innerHTML = body(); drawQR('qr-admin') }
 function drawQR(id){ const el=$(id); if(!el||typeof qrcode!=='function') return; try{ const q=qrcode(0,'M'); q.addData(new URL('./app.html',location.href).href); q.make(); el.innerHTML=q.createImgTag(4,1) }catch(e){} }
 
 /* ---------- navigation ---------- */
@@ -791,10 +886,49 @@ window.taskForm = id => {
   <div class="form-group"><label>Due</label><input id="tdue" type="date" class="field" value="${t?.due||s0?.end||p.end}"></div>
   <div class="form-group"><label>Planned hours</label><input id="tplan" type="number" min="0" class="field" value="${t?.plan||0}"></div>
   <div class="form-group"><label>Actual hours</label><input id="tact" type="number" min="0" class="field" value="${t?.actual||0}"></div>
+  <div class="form-group"><label>Starts after (optional)</label><select id="tafter" class="field"><option value="">— no link —</option>${(()=>{const bad = t ? descendants(t.id) : new Set(); return tasks(p).filter(x=>!t||(x.id!==t.id&&!bad.has(x.id))).map(x=>`<option value="${x.id}" ${(t?.after||[])[0]===x.id?'selected':''}>${esc(x.title)} (${esc(x.id)})</option>`).join('')})()}</select></div>
+  <div class="form-group"><label>Wait after it (days)</label><input id="tlag" type="number" min="0" class="field" value="${t?.lag||0}"></div>
+  <div class="form-group full" id="prebox" hidden><div id="prenote" class="notice warn small"></div><label>Remark: why start before it finishes (required to save)</label><input id="tearly" class="field" value="${esc(t?.earlyRemark||'')}"></div>
+  <div class="form-group full" id="loadbox" hidden><div id="loadnote" class="notice small"></div><div id="loadrem" hidden><label>Remark: why this load is OK (required to save)</label><input id="tremark" class="field" value="${esc(t?.loadRemark||'')}" placeholder="e.g. parallel work agreed, 50/50 with Project A"></div></div>
   <div class="form-group"><label>Quantity measured (optional)</label><select id="qunit" class="field"><option value="">— none (status-based) —</option>${(UNITS[p.type]||[]).map(u=>`<option ${t?.qty?.unit===u?'selected':''}>${u}</option>`).join('')}</select></div>
   <div class="form-group"><label>Quantity: target / done</label><div class="se-row"><input id="qtarget" type="number" min="0" class="field" placeholder="target" value="${t?.qty?.target||''}"><input id="qdone" type="number" min="0" class="field" placeholder="done" value="${t?.qty?.done||''}"></div></div>
   <div class="form-group full"><label>Work location / link</label><input id="tloc" class="field" value="${esc(t?.location||'')}" placeholder="SharePoint or folder link"></div></div>`,
   `${t?`<button class="btn danger" onclick="deleteTask('${t.id}')">Delete</button>`:''}<button class="btn ghost" onclick="closeModal()">Cancel</button><button class="btn primary" onclick="saveTask('${t?.id||''}')">Save</button>`);
+  ['towner','tstart','tdue','tplan','tact','tstatus'].forEach(f=>{ const el=$(f); el.addEventListener('change',()=>loadCheck(t?t.id:'',p.id)); el.addEventListener('input',()=>loadCheck(t?t.id:'',p.id)) });
+  ['tafter','tlag','tstatus','tstart'].forEach(f=>{ const el=$(f); el.addEventListener('change',()=>preCheck(t?t.id:'')); el.addEventListener('input',()=>preCheck(t?t.id:'')) });
+  loadCheck(t?t.id:'', p.id); preCheck(t?t.id:'');
+};
+function formLoad(id, pid){
+  const extra = {id:id||'new', p:pid, start:$('tstart').value, due:$('tdue').value, plan:Number($('tplan').value)||0, actual:Number($('tact').value)||0, status:$('tstatus').value};
+  LOADCACHE = {}; const uid = $('towner').value, o = overload(uid, extra, id||'new');
+  const others = D.tasks.filter(x=>x.owner===uid && x.id!==id && x.status!=='Completed' && x.p!==pid && D.projects.some(p=>p.id===x.p) && x.start && x.due && extra.start && extra.due && x.start<=extra.due && x.due>=extra.start);
+  const mine = o.weeks.filter(w=>w.tasks.some(x=>x.id===(id||'new'))), need = mine.filter(w=>!w.tasks.some(x=>x.id!==(id||'new') && x.loadRemark));
+  LOADCACHE = {}; return {o, others, inThis:mine.length>0, need:need.length>0, agreed:(mine.find(w=>w.remark)||{}).remark||''};
+}
+function preState(id){
+  const pre = D.tasks.find(x=>x.id===$('tafter').value), lag = Number($('tlag').value)||0, st = $('tstatus').value;
+  if(!pre) return {pre:null};
+  const es = pre.due ? addDays(pre.due, 1+lag) : '', early = st!=='Not Started' && pre.status!=='Completed';
+  return {pre, es, early, startsBefore: es && $('tstart').value && $('tstart').value < es};
+}
+window.preCheck = id => {
+  const box = $('prebox'); if(!box) return; const s = preState(id);
+  if(s.pre && s.early){ box.hidden=false; $('prenote').innerHTML = `Waits for <b>${esc(s.pre.title)}</b> (${esc(s.pre.status)}). Starting now needs a remark.` }
+  else box.hidden = true;
+};
+window.loadCheck = (id, pid) => {
+  const box=$('loadbox'), n=$('loadnote'), rem=$('loadrem'); if(!box) return;
+  const {o, others, inThis, need, agreed} = formLoad(id, pid), name = user($('towner').value).name;
+  if(inThis && !need){
+    box.hidden=false; rem.hidden=true; n.className='notice small';
+    n.innerHTML = `${esc(name)} is above ${CAPACITY} h/week in these dates, already agreed: <b>${esc(agreed)}</b>.`;
+  } else if(o.over.length && inThis){
+    box.hidden=false; rem.hidden=false; n.className='notice warn small';
+    n.innerHTML = `<b>${esc(name)} would have ${o.peak.h} h in the week of ${fmtS(o.peak.wk)}</b> (limit ${CAPACITY} h).${others.length?' Also on: '+others.map(x=>esc(projName(x.p)+' · '+x.title+' ('+fmtS(x.start)+'–'+fmtS(x.due)+')')).join('; ')+'.':''} Change the dates or assignee, or add a remark.`;
+  } else if(others.length){
+    box.hidden=false; rem.hidden=true; n.className='notice small';
+    n.innerHTML = `${esc(name)} also works on ${others.map(x=>esc(projName(x.p)+' · '+x.title)).join('; ')} in these dates. Load stays within ${CAPACITY} h/week.`;
+  } else { box.hidden=true; rem.hidden=true }
 };
 window.saveTask = id => {
   const title = $('ttitle').value.trim(); if(!title) return note('Enter a task name.');
@@ -804,25 +938,32 @@ window.saveTask = id => {
   const unit = $('qunit').value, target = Number($('qtarget').value)||0, done = Number($('qdone').value)||0;
   if(unit && !target) return note('Enter the quantity target.');
   let t = id ? D.tasks.find(x=>x.id===id) : null; const p = t ? D.projects.find(x=>x.id===t.p) : project();
+  const lc = formLoad(id, p.id), over = lc.inThis && lc.need, remark = $('tremark') ? $('tremark').value.trim() : '';
+  if(over && !remark) return note(user(owner).name+' would be over '+CAPACITY+' h/week. Add a remark, or change dates or assignee.');
+  const ps = preState(id), early = $('tearly') ? $('tearly').value.trim() : '';
+  if(ps.pre && ps.early && !early) return note('This task waits for "'+ps.pre.title+'". Add a remark why it starts early.');
   if(!t){ t = {id:sid('T-'), p:p.id, notes:[]}; D.tasks.push(t) }
+  t.loadRemark = over ? remark : '';
+  t.after = ps.pre ? [ps.pre.id] : []; t.lag = ps.pre ? (Number($('tlag').value)||0) : 0; t.earlyRemark = ps.pre && ps.early ? early : '';
   Object.assign(t, {title, sid:$('tstage').value, owner, reviewer, start, due, plan:Number($('tplan').value)||0, actual:Number($('tact').value)||0, status:$('tstatus').value, location:$('tloc').value.trim(), qty: unit ? {unit, target, done:Math.min(done,target)} : null});
   addMember(p, owner); addMember(p, reviewer);
   snap(p); log((id?'Updated ':'Created ')+t.id); closeModal(); render();
 };
-window.deleteTask = id => ask('Delete task', 'Delete this task and its history?', {ok:'Delete', danger:true}, () => { const t=D.tasks.find(x=>x.id===id), p=D.projects.find(x=>x.id===t.p); D.tasks=D.tasks.filter(x=>x.id!==id); snap(p); log('Deleted '+id); render() });
+window.deleteTask = id => ask('Delete task', 'Delete this task and its history?', {ok:'Delete', danger:true}, () => { const t=D.tasks.find(x=>x.id===id), p=D.projects.find(x=>x.id===t.p); D.tasks=D.tasks.filter(x=>x.id!==id); D.tasks.forEach(x=>{ if((x.after||[]).includes(id)) x.after = x.after.filter(a=>a!==id) }); snap(p); log('Deleted '+id); render() });
 window.openTask = id => {
   const t = D.tasks.find(x=>x.id===id), p = D.projects.find(x=>x.id===t.p), s = stage(p,t.sid);
   modal(esc(t.title), esc(t.id+' · '+(s?s.name:'')), `<p>${badge(t.status,sColor(t.status))} <small class="muted">earned ${credit(t)}%</small></p><p><b>Assignee:</b> ${esc(user(t.owner).name)}<br><b>Reviewer:</b> ${esc(user(t.reviewer).name)}<br><b>Dates:</b> ${fmt(t.start)} → ${fmt(t.due)}${p.baseline&&p.baseline.tasks[t.id]&&p.baseline.tasks[t.id].due!==t.due?` <small class="muted">(baseline ${fmtS(p.baseline.tasks[t.id].due)})</small>`:''}${canSeeHours()||t.owner===me().id?`<br><b>Hours:</b> ${t.actual} / ${t.plan}`:''}${t.qty?`<br><b>${esc(t.qty.unit)}:</b> ${(t.qty.done||0).toLocaleString()} / ${t.qty.target.toLocaleString()}`:''}<br><b>Location:</b> ${t.location?esc(t.location):'—'}</p>${(t.notes||[]).length?'<h4>History</h4>'+t.notes.map(n=>`<p class="note-line"><small>${esc(n.at?fmt(n.at):'')} · ${esc(n.by||'')}</small><br>${esc(n.text||n)}</p>`).join(''):''}`,
   `<button class="btn ghost" onclick="closeModal()">Close</button>${canPlan(p)?`<button class="btn soft" onclick="taskForm('${t.id}')">Edit</button>`:''}${t.owner===me().id&&t.status!=='Completed'?`<button class="btn primary" onclick="myWork('${t.id}')">Update my work</button>`:''}`);
 };
 window.myWork = id => {
-  const t = D.tasks.find(x=>x.id===id);
-  modal('Update my work', esc(t.title), `<div class="form-grid"><div class="form-group"><label>Actual hours</label><input id="mh" type="number" min="0" class="field" value="${t.actual}"></div><div class="form-group"><label>Status</label><select id="ms" class="field">${['In Progress','Blocked','Ready for Review'].map(s=>`<option ${t.status===s?'selected':''}>${s}</option>`).join('')}</select></div>${t.qty?`<div class="form-group"><label>${esc(t.qty.unit)} done (of ${t.qty.target.toLocaleString()})</label><input id="mq" type="number" min="0" max="${t.qty.target}" class="field" value="${t.qty.done||0}"></div>`:''}<div class="form-group full"><label>Note (required if blocked)</label><textarea id="mn" class="field"></textarea></div></div>`,
+  const t = D.tasks.find(x=>x.id===id), po = predsOpen(t);
+  modal('Update my work', esc(t.title), `${po.length&&t.status==='Not Started'?`<div class="notice warn small">This task waits for: ${po.map(x=>esc(x.title)+' ('+esc(x.status)+')').join(', ')}. You can still start, but a note is required.</div>`:''}<div class="form-grid"><div class="form-group"><label>Actual hours</label><input id="mh" type="number" min="0" class="field" value="${t.actual}"></div><div class="form-group"><label>Status</label><select id="ms" class="field">${['In Progress','Blocked','Ready for Review'].map(s=>`<option ${t.status===s?'selected':''}>${s}</option>`).join('')}</select></div>${t.qty?`<div class="form-group"><label>${esc(t.qty.unit)} done (of ${t.qty.target.toLocaleString()})</label><input id="mq" type="number" min="0" max="${t.qty.target}" class="field" value="${t.qty.done||0}"></div>`:''}<div class="form-group full"><label>Note (required if blocked)</label><textarea id="mn" class="field"></textarea></div></div>`,
   `<button class="btn ghost" onclick="closeModal()">Cancel</button><button class="btn primary" onclick="saveMyWork('${id}')">Save</button>`);
 };
 window.saveMyWork = id => {
   const t = D.tasks.find(x=>x.id===id), n = $('mn').value.trim(), st = $('ms').value;
   if(st==='Blocked' && !n) return note('Say what is blocking you.');
+  if(t.status==='Not Started' && predsOpen(t).length && !n) return note('This task waits for another task. Add a note why you start early.');
   t.actual = Number($('mh').value)||0; t.status = st;
   if(t.qty && $('mq')) t.qty.done = clamp(Number($('mq').value)||0, 0, t.qty.target);
   (t.notes=t.notes||[]).push({at:new Date().toISOString(), by:me().name, text:st+(t.qty?` · ${t.qty.done}/${t.qty.target}`:'')+(n?': '+n:'')});
@@ -906,7 +1047,7 @@ window.openPunch = id => {
   if(x.status==='Open' && canFix) opts.push('Fixed');
   if(x.status!=='Closed' && canClose) opts.push('Closed');
   if(x.status!=='Open' && (canPlan(p)||isMC())) opts.push('Open');
-  modal(esc(x.title), `${esc(x.id)} · ${esc(g?g.name:'')} · Category ${x.cat}`, `<p>${badge(x.status,x.status==='Closed'?'green':x.status==='Fixed'?'gold':'blue')} <small class="muted">${c?'':'Owner '+esc(user(x.owner).name)+' · '}raised ${fmt(x.at)}</small></p>
+  modal(esc(x.title), `${esc(x.id)} · ${esc(g?g.name:'')} · ${PCAT[x.cat]}`, `<p>${badge(x.status,x.status==='Closed'?'green':x.status==='Fixed'?'gold':'blue')} <small class="muted">${c?'':'Owner '+esc(user(x.owner).name)+' · '}raised ${fmt(x.at)}</small></p>
   <div class="thread">${(x.notes||[]).map(n=>`<div class="msg"><small>${esc(who(n))} · ${esc(fmt(n.at))}</small><p>${esc(n.text)}</p></div>`).join('')||'<div class="empty">No notes.</div>'}</div>
   <textarea id="pn" class="field" placeholder="Note"></textarea>${opts.length?`<div class="se-row"><label>Set status</label><select id="ps" class="field"><option value="">— keep ${esc(x.status)} —</option>${opts.map(o=>`<option>${o}</option>`).join('')}</select></div>`:''}`,
   `<button class="btn ghost" onclick="closeModal()">Close</button><button class="btn primary" onclick="savePunchNote('${id}')">Save</button>`);
@@ -1009,6 +1150,9 @@ window.loadDemo = () => {
   OTS_DESIGN.forEach(title=>task(p1,0,title,ld,'Completed',16,18));
   takeBaseline(p1, pm.name, ''); p1.baseline.at = new Date(Date.now()-110*864e5).toISOString();
   T[5].plan = 140; T[5].due = addDays(T[5].due,14); T[8].due = addDays(T[8].due,21);
+  const link = (i,j,lag) => { T[i].after = [T[j].id]; T[i].lag = lag||0 };
+  [10,11,12].forEach(i=>{ T[i].start = addDays(T[i].due,-9) });
+  link(10,9); link(11,10); link(12,11);
   p1.stages.forEach((s,i)=>{ if(i>=4){ s.end = addDays(s.end, i>=9?10:7) } });
 
   /* MES project */
@@ -1061,7 +1205,7 @@ window.loadDemo = () => {
 window.exportExcel = () => {
   const p = project(); if(!p) return; if(typeof XLSX==='undefined') return note('Excel library unavailable offline.');
   const wb = XLSX.utils.book_new(), add = (rows,n) => XLSX.utils.book_append_sheet(wb, XLSX.utils.json_to_sheet(rows.length?rows:[{}]), n);
-  add(tasks(p).map(t=>({ID:t.id, Task:t.title, Stage:(stage(p,t.sid)||{}).name, Assignee:user(t.owner).name, Reviewer:user(t.reviewer).name, Start:t.start, Due:t.due, Baseline_due:p.baseline&&p.baseline.tasks[t.id]?p.baseline.tasks[t.id].due:'', Planned_h:t.plan, Actual_h:t.actual, Quantity:t.qty?t.qty.unit:'', Qty_target:t.qty?t.qty.target:'', Qty_done:t.qty?t.qty.done:'', Status:t.status, Earned_pct:credit(t)})), 'Tasks');
+  add(tasks(p).map(t=>({ID:t.id, Task:t.title, Stage:(stage(p,t.sid)||{}).name, Assignee:user(t.owner).name, Reviewer:user(t.reviewer).name, Start:t.start, Due:t.due, Baseline_due:p.baseline&&p.baseline.tasks[t.id]?p.baseline.tasks[t.id].due:'', Planned_h:t.plan, Actual_h:t.actual, Quantity:t.qty?t.qty.unit:'', Qty_target:t.qty?t.qty.target:'', Qty_done:t.qty?t.qty.done:'', Status:t.status, Starts_after:preds(t).map(x=>x.id).join(', '), Wait_days:t.lag||'', Earned_pct:credit(t)})), 'Tasks');
   add(p.stages.map(s=>({Stage:s.name, Forecast_start:s.start, Forecast_end:s.end, Baseline_end:blEnd(p,s), Slip_days:slip(p,s), Gate:s.milestone?'Yes':'', Applicable:s.na?'No':'Yes', Earned_pct:s.na?'':stagePct(p,s)})), 'Stages');
   add((D.weekly[p.id]||[]).map(w=>({Week:w.wk, Planned_pct:w.ppct, Earned_pct:w.pct, PV_h:w.pv, EV_h:w.ev, AC_h:w.ac, SPI:w.pv?+(w.ev/w.pv).toFixed(2):'', CPI:w.ac?+(w.ev/w.ac).toFixed(2):''})), 'Weekly');
   add(D.punch.filter(x=>x.p===p.id).map(x=>({ID:x.id, Gate:(stage(p,x.gate)||{}).name, Category:x.cat, Finding:x.title, Owner:user(x.owner).name, Status:x.status, Raised:x.at.slice(0,10), Closed:x.closedAt?x.closedAt.slice(0,10):''})), 'Punch');
