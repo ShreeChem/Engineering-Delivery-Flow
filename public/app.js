@@ -107,7 +107,12 @@ let U = {view:'dashboard', projectId:'', stageId:'', search:'', status:'All', qF
 const $ = id => document.getElementById(id);
 const esc = s => String(s ?? '').replace(/[&<>"']/g, c => ({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;'}[c]));
 const uid = p => p + Date.now().toString(36) + Math.random().toString(36).slice(2,6);
-const sid = p => p + Math.random().toString(36).slice(2,6).toUpperCase();
+/* Readable IDs (T-4F7K2Q) that are guaranteed unique across tasks, queries, punch items and data requests. */
+const sid = p => {
+  const used = new Set([...(D.tasks||[]),...(D.queries||[]),...(D.punch||[]),...(D.data||[])].map(x=>x.id));
+  let id; do { id = p + (Math.random().toString(36).slice(2)+'000000').slice(0,6).toUpperCase() } while(used.has(id));
+  return id;
+};
 const iso = d => new Date(d.getTime() - d.getTimezoneOffset()*60000).toISOString().slice(0,10);
 const today = () => iso(new Date());
 const dt = s => new Date(s + 'T12:00:00');
