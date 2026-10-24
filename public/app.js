@@ -60,8 +60,20 @@ const seed = () => ({
   projects:[], tasks:[], queries:[], punch:[], data:[], archive:[], weekly:{}, reports:{},
   audit:[{at:new Date().toISOString(),by:'System',text:'Fresh workspace created'}]
 });
+/* If saved data exists but cannot be read, never overwrite it silently:
+   keep a recovery copy first; if even that fails, stop saving so nothing is lost. */
+let LOAD_WARNING = '', SAVE_BLOCKED = false;
 function load(){
-  try{ const d = JSON.parse(localStorage.getItem(KEY)||'null'); if(d && d.version===24) return d }catch(e){}
+  let raw = null;
+  try{ raw = localStorage.getItem(KEY) }catch(e){}
+  if(raw){
+    try{ const d = JSON.parse(raw); if(d && d.version===24 && Array.isArray(d.users) && d.users.length) return d }catch(e){}
+    let copy = '';
+    try{ copy = KEY+'_recovery_'+Date.now(); localStorage.setItem(copy, raw) }catch(e){ copy = '' }
+    if(copy) LOAD_WARNING = 'The saved data in this browser could not be read. It was kept unchanged under the storage key <b>'+copy+'</b>, and a fresh workspace was started. Do not clear browser data before it has been recovered.';
+    else { SAVE_BLOCKED = true; LOAD_WARNING = 'The saved data in this browser could not be read, and there was no space to keep a copy. <b>Nothing will be saved in this session</b>, so the original data stays untouched. Contact your administrator before making changes.' }
+    return seed();
+  }
   try{
     const o = JSON.parse(localStorage.getItem(OLD_KEY)||'null');
     if(o && o.version===23){
@@ -75,7 +87,19 @@ function load(){
 }
 let D = load();
 ['punch','data','archive','tasks','queries','projects'].forEach(k=>D[k]=D[k]||[]); D.weekly=D.weekly||{}; D.reports=D.reports||{};
-function save(){ try{ localStorage.setItem(KEY, JSON.stringify(D)) }catch(e){} }
+/* Warn once when the browser refuses to store data (full or disabled storage),
+   instead of letting every change vanish on the next reload. */
+let SAVE_WARNED = false;
+function save(){
+  if(SAVE_BLOCKED) return;
+  try{ localStorage.setItem(KEY, JSON.stringify(D)); SAVE_WARNED = false }
+  catch(e){
+    if(SAVE_WARNED) return; SAVE_WARNED = true;
+    setTimeout(() => modal('Changes not saved', 'Browser storage is full or unavailable',
+      `<p>Your latest change is shown on screen but <b>will be lost when this page is closed or reloaded</b>.</p><p>${EMBED?'':'Download a backup now (Settings › Backup), then '}free space, for example by removing demo data or permanently deleting archived projects.</p>`,
+      '<button class="btn primary" onclick="closeModal()">OK</button>'), 0);
+  }
+}
 
 let U = {view:'dashboard', projectId:'', stageId:'', search:'', status:'All', qFilter:'Active', type:'', audience:'', week:'', gate:'All', pStatus:'Open'};
 
@@ -83,7 +107,12 @@ let U = {view:'dashboard', projectId:'', stageId:'', search:'', status:'All', qF
 const $ = id => document.getElementById(id);
 const esc = s => String(s ?? '').replace(/[&<>"']/g, c => ({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;'}[c]));
 const uid = p => p + Date.now().toString(36) + Math.random().toString(36).slice(2,6);
-const sid = p => p + Math.random().toString(36).slice(2,6).toUpperCase();
+/* Readable IDs (T-4F7K2Q) that are guaranteed unique across tasks, queries, punch items and data requests. */
+const sid = p => {
+  const used = new Set([...(D.tasks||[]),...(D.queries||[]),...(D.punch||[]),...(D.data||[])].map(x=>x.id));
+  let id; do { id = p + (Math.random().toString(36).slice(2)+'000000').slice(0,6).toUpperCase() } while(used.has(id));
+  return id;
+};
 const iso = d => new Date(d.getTime() - d.getTimezoneOffset()*60000).toISOString().slice(0,10);
 const today = () => iso(new Date());
 const dt = s => new Date(s + 'T12:00:00');
@@ -760,7 +789,7 @@ window.savePerson = id => {
 window.memberForm = () => {
   const p = project(); if(!canPlan(p)) return;
   const cand = D.users.filter(u=>u.status==='Active'&&u.role!=='Administrator'&&u.id!==p.pm&&!(p.members||[]).includes(u.id)&&(isAdmin()||role()==='Project Manager'||['Engineer',...CUST].includes(u.role)));
-  modal('Add to project',p.code, cand.length?`<select id="mem" class="field">${cand.map(u=>`<option value="${u.id}">${esc(u.name+' · '+u.role)}</option>`).join('')}</select>`:'<div class="empty">Everyone available is already on this project.</div>',
+  modal('Add to project',esc(p.code), cand.length?`<select id="mem" class="field">${cand.map(u=>`<option value="${u.id}">${esc(u.name+' · '+u.role)}</option>`).join('')}</select>`:'<div class="empty">Everyone available is already on this project.</div>',
   `<button class="btn ghost" onclick="closeModal()">Cancel</button><button class="btn soft" onclick="closeModal();personForm()">＋ New person</button>${cand.length?'<button class="btn primary" onclick="saveMember()">Add</button>':''}`);
 };
 window.saveMember = () => { const p = project(); addMember(p, $('mem').value); log('Added '+user($('mem').value).name+' to '+p.code); closeModal(); render() };
@@ -828,7 +857,7 @@ window.approveBaseline = () => {
   const p = project(); if(!canEditProject(p)) return note('Only the project’s PM or the Administrator can approve the baseline.');
   if(!liveTasks(p).length) return note('Add tasks with dates and hours first.');
   const re = !!p.baseline;
-  modal(re?'Re-baseline':'Approve baseline', p.code, `<p>${re?`Replaces baseline ${p.baseline.n}. The old baseline is kept in the history and the change is logged.`:'Freezes today’s task dates, planned hours and stage dates. From now on, slips show against this plan.'}</p><p><b>${liveTasks(p).length}</b> tasks · <b>${sum(liveTasks(p),weight)}</b> planned hours</p>${re?'<textarea id="blr" class="field" placeholder="Reason for re-baselining (required)"></textarea>':''}`,
+  modal(re?'Re-baseline':'Approve baseline', esc(p.code), `<p>${re?`Replaces baseline ${p.baseline.n}. The old baseline is kept in the history and the change is logged.`:'Freezes today’s task dates, planned hours and stage dates. From now on, slips show against this plan.'}</p><p><b>${liveTasks(p).length}</b> tasks · <b>${sum(liveTasks(p),weight)}</b> planned hours</p>${re?'<textarea id="blr" class="field" placeholder="Reason for re-baselining (required)"></textarea>':''}`,
   `<button class="btn ghost" onclick="closeModal()">Cancel</button><button class="btn primary" onclick="confirmBaseline()">${re?'Re-baseline':'Approve'}</button>`);
 };
 window.confirmBaseline = () => {
@@ -858,7 +887,7 @@ window.deleteForever = id => {
 /* ---------- stages ---------- */
 window.editStages = () => {
   const p = project(); if(!canPlan(p)) return;
-  modal('Edit stages', p.code+' · dates here are the forecast; the baseline does not change', p.stages.map(s=>`<div class="stage-edit"><input class="field" id="sn_${s.id}" value="${esc(s.name)}"><div class="se-row"><input type="date" class="field" id="ss_${s.id}" value="${s.start||''}"><input type="date" class="field" id="se_${s.id}" value="${s.end||''}"></div><div class="se-row"><label><input type="checkbox" id="sm_${s.id}" ${s.milestone?'checked':''}> Gate / milestone</label><label><input type="checkbox" id="sa_${s.id}" ${s.na?'checked':''}> Not applicable</label>${blEnd(p,s)?`<small class="muted">baseline end ${fmtS(blEnd(p,s))}</small>`:''}</div></div>`).join(''),
+  modal('Edit stages', esc(p.code)+' · dates here are the forecast; the baseline does not change', p.stages.map(s=>`<div class="stage-edit"><input class="field" id="sn_${s.id}" value="${esc(s.name)}"><div class="se-row"><input type="date" class="field" id="ss_${s.id}" value="${s.start||''}"><input type="date" class="field" id="se_${s.id}" value="${s.end||''}"></div><div class="se-row"><label><input type="checkbox" id="sm_${s.id}" ${s.milestone?'checked':''}> Gate / milestone</label><label><input type="checkbox" id="sa_${s.id}" ${s.na?'checked':''}> Not applicable</label>${blEnd(p,s)?`<small class="muted">baseline end ${fmtS(blEnd(p,s))}</small>`:''}</div></div>`).join(''),
   '<button class="btn ghost" onclick="closeModal()">Cancel</button><button class="btn primary" onclick="saveStages()">Save</button>');
 };
 window.saveStages = () => {
@@ -876,7 +905,7 @@ window.taskForm = id => {
   const reviewers = D.users.filter(u=>u.status==='Active'&&['Lead','Project Manager','Administrator'].includes(u.role));
   const sts = STATUSES.filter(s=>s!=='Completed'||t?.status==='Completed'), st = p.stages.filter(s=>!s.na), s0 = t ? stage(p,t.sid) : (stage(p,U.stageId)||st[0]);
   const defRev = t ? t.reviewer : ((p.members||[]).find(m=>user(m).role==='Lead')||p.pm);
-  modal(t?'Edit task':'New task', p.code+' · assigning someone adds them to the project',
+  modal(t?'Edit task':'New task', esc(p.code)+' · assigning someone adds them to the project',
   `<div class="form-grid"><div class="form-group full"><label>Task</label><input id="ttitle" class="field" value="${esc(t?.title||'')}"></div>
   <div class="form-group"><label>Stage</label><select id="tstage" class="field">${st.map(s=>`<option value="${s.id}" ${s0&&s0.id===s.id?'selected':''}>${esc(s.name)}</option>`).join('')}</select></div>
   <div class="form-group"><label>Status</label><select id="tstatus" class="field">${sts.map(s=>`<option ${(t?.status||'Not Started')===s?'selected':''}>${s}</option>`).join('')}</select></div>
@@ -987,7 +1016,7 @@ window.reviewAction = (id,act) => {
 window.queryForm = () => {
   const p = project(); if(!p) return; const c = isCust();
   const owners = D.users.filter(u=>u.status==='Active'&&!CUST.includes(u.role)&&(p.pm===u.id||(p.members||[]).includes(u.id)));
-  modal(c?'Ask the project team':'New query / issue', p.code, `<div class="form-grid">${c?'':`<div class="form-group"><label>Type</label><select id="qkind" class="field"><option>Query</option><option>Issue</option></select></div><div class="form-group"><label>Visible to</label><select id="qvis" class="field">${Object.entries(Q_VIS).map(([k,v])=>`<option value="${k}">${v}</option>`).join('')}</select></div>`}
+  modal(c?'Ask the project team':'New query / issue', esc(p.code), `<div class="form-grid">${c?'':`<div class="form-group"><label>Type</label><select id="qkind" class="field"><option>Query</option><option>Issue</option></select></div><div class="form-group"><label>Visible to</label><select id="qvis" class="field">${Object.entries(Q_VIS).map(([k,v])=>`<option value="${k}">${v}</option>`).join('')}</select></div>`}
   <div class="form-group full"><label>Title</label><input id="qtitle" class="field"></div>
   <div class="form-group"><label>Priority</label><select id="qpri" class="field"><option>Medium</option><option>High</option><option>Low</option></select></div>
   ${c?'':`<div class="form-group"><label>Owner</label><select id="qowner" class="field">${owners.map(u=>`<option value="${u.id}">${esc(u.name)}</option>`).join('')}</select></div>`}
@@ -1026,7 +1055,7 @@ window.punchForm = () => {
   const g = gates(p); if(!g.length) return note('Mark at least one stage as a gate first.');
   const owners = D.users.filter(u=>u.status==='Active'&&['Engineer','Lead','Project Manager'].includes(u.role)&&(p.pm===u.id||(p.members||[]).includes(u.id)));
   const cur = g.find(s=>stagePct(p,s)<100) || g[0];
-  modal('New punch item', p.code, `<div class="form-grid"><div class="form-group full"><label>Finding</label><input id="pt" class="field" placeholder="e.g. Column pressure response 15% off design at turndown"></div>
+  modal('New punch item', esc(p.code), `<div class="form-grid"><div class="form-group full"><label>Finding</label><input id="pt" class="field" placeholder="e.g. Column pressure response 15% off design at turndown"></div>
   <div class="form-group"><label>Gate</label><select id="pg" class="field">${g.map(s=>`<option value="${s.id}" ${s.id===cur.id?'selected':''}>${esc(s.name)}</option>`).join('')}</select></div>
   <div class="form-group"><label>Category</label><select id="pc" class="field"><option value="A">A – blocks the gate</option><option value="B" selected>B – blocks start-up</option><option value="C">C – minor, can close later</option></select></div>
   ${isCust()?'':`<div class="form-group"><label>Owner</label><select id="po" class="field">${owners.map(u=>`<option value="${u.id}">${esc(u.name)}</option>`).join('')}</select></div>`}
@@ -1064,7 +1093,7 @@ window.savePunchNote = id => {
 /* ---------- customer data requests ---------- */
 window.dataForm = id => {
   const p = project(); if(!canPlan(p)) return; const d = id ? D.data.find(x=>x.id===id) : null;
-  modal(d?'Edit data request':'New data request', p.code, `<div class="form-grid"><div class="form-group full"><label>What is needed</label><input id="dt" class="field" value="${esc(d?.title||'')}" placeholder="e.g. DCS database export, rev D"></div>
+  modal(d?'Edit data request':'New data request', esc(p.code), `<div class="form-grid"><div class="form-group full"><label>What is needed</label><input id="dt" class="field" value="${esc(d?.title||'')}" placeholder="e.g. DCS database export, rev D"></div>
   <div class="form-group"><label>Owed by</label><select id="do" class="field">${CUST.map(c=>`<option ${d?.owedBy===c?'selected':''}>${c}</option>`).join('')}</select></div>
   <div class="form-group"><label>Needed by</label><input id="dn" type="date" class="field" value="${d?.needed||addDays(today(),14)}"></div>
   <div class="form-group"><label>Blocks stage (optional)</label><select id="db" class="field"><option value="">—</option>${p.stages.filter(s=>!s.na).map(s=>`<option value="${s.id}" ${d?.blocks===s.id?'selected':''}>${esc(s.name)}</option>`).join('')}</select></div></div>`,
@@ -1097,7 +1126,7 @@ window.dataAct = (id,s) => {
 window.reportInputs = () => {
   const p = project(); if(!canPlan(p)) return; const inp = inputs(p, weekStart(today()));
   const f = (id,lab,ph,val) => `<div class="form-group full"><label>${lab}</label><textarea id="${id}" class="field" placeholder="${ph}">${esc(val)}</textarea></div>`;
-  modal('This week’s report', `${p.code} · week of ${fmt(weekStart(today()))} · numbers are calculated automatically`,
+  modal('This week’s report', `${esc(p.code)} · week of ${fmt(weekStart(today()))} · numbers are calculated automatically`,
   `<div class="form-grid">${f('rn','Internal summary (management & leads)','What changed, what it means, what is needed — 3–4 sentences',inp.narrative)}${f('rd','Decisions needed (one per line)','Topic – options – recommendation',inp.decisions)}${f('rr','Top risks (one per line, max 3)','Risk – impact – mitigation',inp.risks)}${f('rc','Customer summary (main contractor & plant owner)','No hours, costs or internal names',inp.custNarrative)}${f('ra','Actions needed from customers (one per line)','Late data and open queries are added automatically',inp.custActions)}${f('rx','Next week (one per line)','Key activities and milestones',inp.nextWeek)}</div>`,
   `<button class="btn ghost" onclick="closeModal()">Cancel</button><button class="btn primary" onclick="saveInputs()">Save</button>`);
 };
@@ -1217,6 +1246,7 @@ window.exportExcel = () => {
 D.projects.forEach(snap); save();
 if(EMBED && !D.projects.length && !D.users.some(u=>u.demo)){ loadDemo(); const pm = D.users.find(u=>u.name==='Demo Project Manager'); if(pm){ D.session = pm.id; save() } U.view='dashboard' }
 render();
+if(LOAD_WARNING) modal('Saved data could not be loaded', 'Your data has not been deleted', `<p>${LOAD_WARNING}</p>`, '<button class="btn primary" onclick="closeModal()">OK</button>');
 if(EMBED) note('Demo data loaded. Tap the round avatar (top right) to switch roles.');
 try{ if(!EMBED && 'serviceWorker' in navigator) navigator.serviceWorker.register('./sw.js').catch(()=>{}) }catch(e){}
 })();
