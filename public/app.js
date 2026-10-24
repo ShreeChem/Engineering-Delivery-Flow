@@ -87,7 +87,19 @@ function load(){
 }
 let D = load();
 ['punch','data','archive','tasks','queries','projects'].forEach(k=>D[k]=D[k]||[]); D.weekly=D.weekly||{}; D.reports=D.reports||{};
-function save(){ if(SAVE_BLOCKED) return; try{ localStorage.setItem(KEY, JSON.stringify(D)) }catch(e){} }
+/* Warn once when the browser refuses to store data (full or disabled storage),
+   instead of letting every change vanish on the next reload. */
+let SAVE_WARNED = false;
+function save(){
+  if(SAVE_BLOCKED) return;
+  try{ localStorage.setItem(KEY, JSON.stringify(D)); SAVE_WARNED = false }
+  catch(e){
+    if(SAVE_WARNED) return; SAVE_WARNED = true;
+    setTimeout(() => modal('Changes not saved', 'Browser storage is full or unavailable',
+      `<p>Your latest change is shown on screen but <b>will be lost when this page is closed or reloaded</b>.</p><p>${EMBED?'':'Download a backup now (Settings › Backup), then '}free space, for example by removing demo data or permanently deleting archived projects.</p>`,
+      '<button class="btn primary" onclick="closeModal()">OK</button>'), 0);
+  }
+}
 
 let U = {view:'dashboard', projectId:'', stageId:'', search:'', status:'All', qFilter:'Active', type:'', audience:'', week:'', gate:'All', pStatus:'Open'};
 
