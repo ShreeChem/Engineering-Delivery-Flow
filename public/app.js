@@ -60,8 +60,20 @@ const seed = () => ({
   projects:[], tasks:[], queries:[], punch:[], data:[], archive:[], weekly:{}, reports:{},
   audit:[{at:new Date().toISOString(),by:'System',text:'Fresh workspace created'}]
 });
+/* If saved data exists but cannot be read, never overwrite it silently:
+   keep a recovery copy first; if even that fails, stop saving so nothing is lost. */
+let LOAD_WARNING = '', SAVE_BLOCKED = false;
 function load(){
-  try{ const d = JSON.parse(localStorage.getItem(KEY)||'null'); if(d && d.version===24) return d }catch(e){}
+  let raw = null;
+  try{ raw = localStorage.getItem(KEY) }catch(e){}
+  if(raw){
+    try{ const d = JSON.parse(raw); if(d && d.version===24 && Array.isArray(d.users) && d.users.length) return d }catch(e){}
+    let copy = '';
+    try{ copy = KEY+'_recovery_'+Date.now(); localStorage.setItem(copy, raw) }catch(e){ copy = '' }
+    if(copy) LOAD_WARNING = 'The saved data in this browser could not be read. It was kept unchanged under the storage key <b>'+copy+'</b>, and a fresh workspace was started. Do not clear browser data before it has been recovered.';
+    else { SAVE_BLOCKED = true; LOAD_WARNING = 'The saved data in this browser could not be read, and there was no space to keep a copy. <b>Nothing will be saved in this session</b>, so the original data stays untouched. Contact your administrator before making changes.' }
+    return seed();
+  }
   try{
     const o = JSON.parse(localStorage.getItem(OLD_KEY)||'null');
     if(o && o.version===23){
@@ -75,7 +87,7 @@ function load(){
 }
 let D = load();
 ['punch','data','archive','tasks','queries','projects'].forEach(k=>D[k]=D[k]||[]); D.weekly=D.weekly||{}; D.reports=D.reports||{};
-function save(){ try{ localStorage.setItem(KEY, JSON.stringify(D)) }catch(e){} }
+function save(){ if(SAVE_BLOCKED) return; try{ localStorage.setItem(KEY, JSON.stringify(D)) }catch(e){} }
 
 let U = {view:'dashboard', projectId:'', stageId:'', search:'', status:'All', qFilter:'Active', type:'', audience:'', week:'', gate:'All', pStatus:'Open'};
 
@@ -1217,6 +1229,7 @@ window.exportExcel = () => {
 D.projects.forEach(snap); save();
 if(EMBED && !D.projects.length && !D.users.some(u=>u.demo)){ loadDemo(); const pm = D.users.find(u=>u.name==='Demo Project Manager'); if(pm){ D.session = pm.id; save() } U.view='dashboard' }
 render();
+if(LOAD_WARNING) modal('Saved data could not be loaded', 'Your data has not been deleted', `<p>${LOAD_WARNING}</p>`, '<button class="btn primary" onclick="closeModal()">OK</button>');
 if(EMBED) note('Demo data loaded. Tap the round avatar (top right) to switch roles.');
 try{ if(!EMBED && 'serviceWorker' in navigator) navigator.serviceWorker.register('./sw.js').catch(()=>{}) }catch(e){}
 })();
